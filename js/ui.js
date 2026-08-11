@@ -18,19 +18,24 @@ function h(tag, className, html) {
   return node;
 }
 
-// Traditional pip positions, as percentages inside the card's pip box.
-// Anything below the halfway line is drawn upside down, like a real card.
+// Traditional pip positions as percentages of the card face. The columns sit
+// inboard of the corner indices and the rows start below them, so nothing
+// collides at phone sizes. Pips past the halfway line are drawn upside down.
 const PIP_LAYOUT = {
-  2: [[50, 6], [50, 94]],
-  3: [[50, 6], [50, 50], [50, 94]],
-  4: [[20, 6], [80, 6], [20, 94], [80, 94]],
-  5: [[20, 6], [80, 6], [50, 50], [20, 94], [80, 94]],
-  6: [[20, 6], [80, 6], [20, 50], [80, 50], [20, 94], [80, 94]],
-  7: [[20, 6], [80, 6], [50, 28], [20, 50], [80, 50], [20, 94], [80, 94]],
-  8: [[20, 6], [80, 6], [50, 28], [20, 50], [80, 50], [50, 72], [20, 94], [80, 94]],
-  9: [[20, 6], [80, 6], [20, 35], [80, 35], [50, 50], [20, 65], [80, 65], [20, 94], [80, 94]],
-  10: [[20, 6], [80, 6], [20, 35], [80, 35], [50, 20], [50, 80], [20, 65], [80, 65], [20, 94], [80, 94]],
+  2: [[50, 20], [50, 80]],
+  3: [[50, 20], [50, 50], [50, 80]],
+  4: [[30, 20], [70, 20], [30, 80], [70, 80]],
+  5: [[30, 20], [70, 20], [50, 50], [30, 80], [70, 80]],
+  6: [[30, 20], [70, 20], [30, 50], [70, 50], [30, 80], [70, 80]],
+  7: [[30, 20], [70, 20], [50, 35], [30, 50], [70, 50], [30, 80], [70, 80]],
+  8: [[30, 20], [70, 20], [50, 35], [30, 50], [70, 50], [50, 65], [30, 80], [70, 80]],
+  9: [[30, 20], [70, 20], [30, 40], [70, 40], [50, 50], [30, 60], [70, 60], [30, 80], [70, 80]],
+  10: [[30, 20], [70, 20], [30, 40], [70, 40], [50, 30], [50, 70], [30, 60], [70, 60], [30, 80], [70, 80]],
 };
+
+// How long the scoring animation takes, as a multiplier.
+const SPEED_KEY = 'balatro.speed.v1';
+const SPEEDS = { slow: 1.7, normal: 1, fast: 0.55 };
 
 export class UI {
   constructor(engine, app) {
@@ -40,6 +45,12 @@ export class UI {
     this.animating = false;
     this.longPressTimer = null;
     this.runInfoTab = 'hands';
+    this.lastRenderedUids = new Set();
+    this.speed = 'normal';
+    try {
+      const saved = localStorage.getItem(SPEED_KEY);
+      if (saved && SPEEDS[saved]) this.speed = saved;
+    } catch (err) { /* default is fine */ }
 
     this.bindStaticControls();
     engine.on('state', () => { if (!this.animating) this.render(); });
@@ -196,20 +207,29 @@ export class UI {
   }
 
   // ── hand ────────────────────────────────────────────────────────────
-  renderHand() {
+  renderHand(explicit) {
     const row = $('hand-row');
     row.innerHTML = '';
     const e = this.e;
-    const cards = e.hand;
+    const cards = explicit || e.hand;
     $('ct-handsize').textContent = `${cards.length}/${e.handSize}`;
 
+    // Anything that was not on screen last time gets dealt in.
+    const previous = this.lastRenderedUids;
+    let dealt = 0;
     cards.forEach((card) => {
       const node = this.cardEl(card);
       if (this.selected.has(card.uid)) node.classList.add('selected');
       if (e.bossActive('bell') && e.forcedCard === card) node.dataset.forced = '1';
+      if (!previous.has(card.uid)) {
+        node.classList.add('dealt');
+        node.style.animationDelay = `${dealt * 45}ms`;
+        dealt += 1;
+      }
       this.attachCardHandlers(node, card);
       row.appendChild(node);
     });
+    this.lastRenderedUids = new Set(cards.map((c) => c.uid));
 
     this.layoutHand();
   }
@@ -797,6 +817,24 @@ export class UI {
     volRow.appendChild(slider);
     node.appendChild(volRow);
 
+    const speedRow = h('div', 'opt-row');
+    speedRow.appendChild(h('span', null, 'Scoring speed'));
+    const speedBtns = h('div', 'seg');
+    for (const key of ['slow', 'normal', 'fast']) {
+      const btn = h('button', `btn btn-tiny ${this.speed === key ? 'btn-gold' : 'btn-ghost'}`, key[0].toUpperCase() + key.slice(1));
+      btn.addEventListener('click', () => {
+        this.speed = key;
+        try { localStorage.setItem(SPEED_KEY, key); } catch (err) { /* ignore */ }
+        [...speedBtns.children].forEach((b, i) => {
+          b.className = `btn btn-tiny ${['slow', 'normal', 'fast'][i] === key ? 'btn-gold' : 'btn-ghost'}`;
+        });
+        audio.sfx('select');
+      });
+      speedBtns.appendChild(btn);
+    }
+    speedRow.appendChild(speedBtns);
+    node.appendChild(speedRow);
+
     node.appendChild(h('p', null, '<span class="muted">On iPhone the ring/silent switch mutes web audio — flip it to ring if you hear nothing.</span>'));
 
     const back = h('button', 'btn btn-gold', onBack ? 'Back' : 'Close');
@@ -949,18 +987,45 @@ export class UI {
     const played = selected.slice();
     this.selected.clear();
 
+    // The engine refills the hand the moment the hand is played, so hold the
+    // display at the cards that stayed behind until the scoring is over.
+    // Nothing is tappable while the hand resolves, so stop advertising it.
+    $('btn-play').classList.remove('ready');
+    $('btn-discard').classList.remove('ready');
+
+    const kept = e.hand.filter((c) => !played.includes(c));
+    const scoreBefore = e.score;
+    this.renderHand(kept);
+    this.showPlayed(played);
+    await wait(220 * this.speedMult);
+
     const result = e.playHand(played);
     if (!result) { this.animating = false; this.render(); return; }
 
-    this.renderHand();
-    this.showPlayed(played);
+    // Hands and deck tick over immediately; the round score waits for the
+    // total so the reveal is not spoiled.
+    $('ct-hands').textContent = e.handsLeft;
+    $('ct-discards').textContent = e.discardsLeft;
+    $('ct-deck').textContent = `${e.drawPile.length}/${e.fullDeck.length}`;
+    $('sb-score').textContent = fmt(scoreBefore);
+
     await this.animateScore(result);
+    await this.clearPlayArea();
+
     this.animating = false;
     this.render();
-    await wait(240);
-    $('play-area').innerHTML = '';
-    if (e.gameState === 'playing') this.render();
     this.flushDeferred();
+  }
+
+  get speedMult() { return SPEEDS[this.speed] || 1; }
+
+  // Sweep the played cards off the felt before the new hand is dealt in.
+  async clearPlayArea() {
+    const area = $('play-area');
+    if (!area.children.length) return;
+    for (const node of area.children) node.classList.add('leaving');
+    await wait(300 * this.speedMult);
+    area.innerHTML = '';
   }
 
   onDiscard() {
@@ -975,16 +1040,21 @@ export class UI {
   showPlayed(cards) {
     const area = $('play-area');
     area.innerHTML = '';
-    for (const card of cards) {
+    cards.forEach((card, i) => {
       const node = this.cardEl(card);
       node.dataset.playedUid = card.uid;
+      node.style.animationDelay = `${i * 55}ms`;
       area.appendChild(node);
-    }
+    });
   }
 
   async animateScore(result) {
     const steps = result.steps;
-    const delay = Math.max(40, Math.min(130, Math.round(1600 / Math.max(1, steps.length))));
+    // Pace off the number of things that actually change a number, so a plain
+    // hand is unhurried and a 30-trigger board still finishes in a few seconds.
+    const beats = steps.filter((s) => s.type === 'effect').length;
+    const unit = Math.max(95, Math.min(215, Math.round(2900 / Math.max(1, beats)))) * this.speedMult;
+
     const chipsEl = $('sb-chips');
     const multEl = $('sb-mult');
     $('sb-hand-name').textContent = HAND_NAMES[result.handKey];
@@ -996,41 +1066,45 @@ export class UI {
         chipsEl.textContent = fmt(step.chips);
         multEl.textContent = fmt(step.mult);
         this.bump();
-        await wait(delay * 2);
+        await wait(unit * 2.2);
       } else if (step.type === 'card_trigger') {
-        const node = $('play-area').querySelector(`[data-played-uid="${step.card.uid}"]`);
+        const node = this.playedNode(step.card);
         if (node) { node.classList.remove('scoring'); void node.offsetWidth; node.classList.add('scoring'); }
         audio.sfx('chip');
-        await wait(delay * 0.6);
+        await wait(unit * 0.8);
       } else if (step.type === 'card_debuffed') {
-        const node = $('play-area').querySelector(`[data-played-uid="${step.card.uid}"]`);
-        if (node) this.floatAt(node, 'debuffed', 'mult');
-        await wait(delay);
+        const node = this.playedNode(step.card);
+        if (node) { node.classList.add('debuffed'); this.floatAt(node, 'debuffed', 'mult'); }
+        await wait(unit);
       } else if (step.type === 'effect') {
         chipsEl.textContent = fmt(step.chips);
         multEl.textContent = fmt(round2(step.mult));
         this.bump();
         const anchor = step.card
-          ? $('play-area').querySelector(`[data-played-uid="${step.card.uid}"]`) || this.handNode(step.card)
+          ? this.playedNode(step.card) || this.handNode(step.card)
           : this.jokerNodeByName(step.source);
         for (const part of step.parts) this.floatAt(anchor, partText(part), part.kind);
         this.sfxForEffect(step);
-        await wait(delay);
+        await wait(unit);
       } else if (step.type === 'balance') {
         chipsEl.textContent = fmt(step.chips);
         multEl.textContent = fmt(step.mult);
         this.bump();
-        await wait(delay);
+        await wait(unit * 1.4);
       } else if (step.type === 'total') {
         chipsEl.textContent = fmt(step.chips);
         multEl.textContent = fmt(round2(step.mult));
-        await wait(delay * 2);
+        await wait(unit * 2.4);
         audio.sfx('levelup');
         this.floatAt($('sb-score'), `+${fmt(step.score)}`, 'money');
+        $('sb-score').textContent = fmt(this.e.score);
+        // Let the result sit long enough to actually read it.
+        await wait(unit * 3);
       }
     }
-    await wait(200);
   }
+
+  playedNode(card) { return $('play-area').querySelector(`[data-played-uid="${card.uid}"]`); }
 
   sfxForEffect(step) {
     const kinds = step.parts.map((p) => p.kind);
@@ -1066,9 +1140,8 @@ export class UI {
     const rect = anchor ? anchor.getBoundingClientRect() : { left: window.innerWidth / 2, top: window.innerHeight / 2, width: 0 };
     node.style.left = `${rect.left + rect.width / 2}px`;
     node.style.top = `${rect.top - 6}px`;
-    node.style.transform = 'translateX(-50%)';
     fx.appendChild(node);
-    setTimeout(() => node.remove(), 900);
+    setTimeout(() => node.remove(), 1100);
   }
 
   toast(text, kind = 'info') {

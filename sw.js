@@ -1,5 +1,5 @@
 // Offline shell. Bump CACHE_VERSION whenever the asset list changes.
-const CACHE_VERSION = 'balatro-v3';
+const CACHE_VERSION = 'balatro-v4';
 
 const ASSETS = [
   './',

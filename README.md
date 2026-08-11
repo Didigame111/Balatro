@@ -120,6 +120,11 @@ continue into endless mode if you want to see how far the numbers go.
 | Settings, stats, collection, deck, quit | **Options** in the sidebar |
 | View the full deck | Tap the deck pile |
 
+Scoring is paced so you can follow it: the played cards stay on the felt, each
+one pops as it scores, and the hand is only refilled once the whole sequence has
+finished. **Settings → Scoring speed** switches between Slow, Normal and Fast if
+the default is not to your taste.
+
 As soon as you select cards, the sidebar names the hand you are holding, shows
 its current level, and fills in the base Chips × Mult it will score with — so you
 can compare two possible hands before committing one.
@@ -156,8 +161,10 @@ bottom, the Play / Sort / Discard controls, and the draw pile in the corner.
 
 Cards are drawn in CSS with real pip layouts — a nine shows nine pips in the
 traditional arrangement, aces get a single large pip, court cards a framed
-index — plus corner indices at both ends. Enhancements tint the face, editions
-wash it with a gradient, and seals show as a coloured dot.
+index — plus corner indices at both ends. Pip columns sit inboard of the indices
+and the rows start below them, so nothing collides at phone size. Enhancements
+tint the face, editions wash it with a gradient, and seals show as a coloured
+dot.
 
 ## Sound
 

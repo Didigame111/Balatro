@@ -596,27 +596,27 @@ body {
 
 .pc-corner {
   position: absolute;
-  top: 2%;
+  top: 2.5%;
   left: 5%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  line-height: .92;
+  line-height: .88;
   font-weight: 900;
 }
-.pc-corner .pc-rank { font-size: calc(var(--card-h) * .2); }
-.pc-corner .pc-suit { font-size: calc(var(--card-h) * .13); }
+.pc-corner .pc-rank { font-size: calc(var(--card-h) * .17); letter-spacing: -.05em; }
+.pc-corner .pc-suit { font-size: calc(var(--card-h) * .105); }
 .pc-corner-b {
-  top: auto; left: auto; bottom: 2%; right: 5%;
+  top: auto; left: auto; bottom: 2.5%; right: 5%;
   transform: rotate(180deg);
 }
 
 /* Traditional pip layout, positioned as percentages of the card face. */
-.pc-pips { position: absolute; inset: 13% 17%; }
+.pc-pips { position: absolute; inset: 0; }
 .pc-pip {
   position: absolute;
   transform: translate(-50%, -50%);
-  font-size: calc(var(--card-h) * .155);
+  font-size: calc(var(--card-h) * .142);
   line-height: 1;
 }
 .pc-pip.flip { transform: translate(-50%, -50%) rotate(180deg); }
@@ -625,19 +625,21 @@ body {
   inset: 0;
   display: grid;
   place-items: center;
-  font-size: calc(var(--card-h) * .42);
+  font-size: calc(var(--card-h) * .44);
   line-height: 1;
 }
+/* Court cards get a framed index instead of a portrait. */
 .pc-face {
   position: absolute;
-  inset: 14% 12%;
+  inset: 17% 16%;
   border-radius: 3px;
-  border: 1px solid currentColor;
+  border: 1.5px solid currentColor;
+  background: rgba(0, 0, 0, .045);
   display: grid;
   place-items: center;
-  font-size: calc(var(--card-h) * .3);
+  font-size: calc(var(--card-h) * .34);
   font-weight: 900;
-  opacity: .92;
+  letter-spacing: -.04em;
 }
 
 /* The lift is folded into the inline arc transform so the fan survives. */
@@ -645,8 +647,22 @@ body {
 .pcard.debuffed { background: #9a9a9a; color: #3a3a3a; }
 .pcard.facedown { background: repeating-linear-gradient(45deg, #c0392b 0 4px, #a53024 4px 8px); border-color: #f0f0e6; }
 .pcard.facedown > * { visibility: hidden; }
-.pcard.scoring { animation: cardScore .34s ease; }
-@keyframes cardScore { 40% { transform: translateY(calc(var(--card-h) * -.25)) scale(1.08); } }
+.pcard.scoring { animation: cardScore .42s cubic-bezier(.3, 1.5, .5, 1); }
+@keyframes cardScore {
+  35% { transform: translateY(calc(var(--card-h) * -.28)) scale(1.1); }
+  100% { transform: translateY(0) scale(1); }
+}
+
+/* Cards fade in where they land; the fan's rotation lives in an inline
+   transform, so these keyframes deliberately leave transform alone. */
+.pcard.dealt { animation: dealIn .34s ease backwards; }
+@keyframes dealIn { from { opacity: 0; } }
+
+.play-area .pcard { animation: playIn .3s cubic-bezier(.2, .9, .3, 1) backwards; }
+@keyframes playIn { from { opacity: 0; transform: translateY(calc(var(--card-h) * .55)) scale(.9); } }
+
+.play-area .pcard.leaving { animation: playOut .3s ease forwards; }
+@keyframes playOut { to { opacity: 0; transform: translateY(calc(var(--card-h) * -.4)) scale(.92); } }
 
 .pcard.enh-bonus { background: #bcd9f2; }
 .pcard.enh-mult { background: #f6c3bd; }
@@ -900,6 +916,8 @@ body {
   font-size: calc(var(--fs) * 1.05); font-weight: 800;
 }
 .opt-row .btn { width: auto; min-width: 60px; margin-top: 0; flex: none; }
+.seg { display: flex; gap: 4px; }
+.seg .btn { min-width: 0; padding: 6px 9px; }
 .slider { flex: 1; max-width: 180px; accent-color: var(--gold); height: 24px; background: transparent; }
 .slider::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: rgba(0,0,0,.4); }
 .slider::-webkit-slider-thumb {
@@ -935,13 +953,17 @@ body {
 .float {
   position: absolute;
   font-weight: 900;
-  font-size: calc(var(--fs) * 1.1);
-  text-shadow: 0 2px 3px rgba(0,0,0,.6);
-  animation: floatUp .8s ease forwards;
+  font-size: calc(var(--fs) * 1.25);
+  text-shadow: 0 2px 4px rgba(0,0,0,.75), 0 0 10px rgba(0,0,0,.5);
+  animation: floatUp 1.05s ease forwards;
   white-space: nowrap;
 }
 .float.chips { color: #7fd0ff; }
 .float.mult { color: #ff9d96; }
 .float.xmult { color: #ffd0f0; }
 .float.money { color: var(--gold); }
-@keyframes floatUp { to { transform: translateY(-32px); opacity: 0; } }
+@keyframes floatUp {
+  0% { transform: translate(-50%, 0) scale(.8); opacity: 0; }
+  18% { transform: translate(-50%, -6px) scale(1.08); opacity: 1; }
+  100% { transform: translate(-50%, -40px) scale(1); opacity: 0; }
+}
