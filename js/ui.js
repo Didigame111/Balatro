@@ -9,6 +9,7 @@ import { RNG } from './rng.js';
 import { audio } from './audio.js';
 import { haptics } from './haptics.js';
 import { jokerArt, consumableArt, packArt, voucherArt, tagArt } from './art.js';
+import { Tutorial } from './tutorial.js';
 
 const $ = (id) => document.getElementById(id);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -113,7 +114,10 @@ export class UI {
     } catch (err) { /* defaults are fine */ }
     document.body.classList.toggle('two-colour', this.deckColour === 'two');
 
+    this.tutorial = new Tutorial(this);
+
     this.bindStaticControls();
+    engine.on('*', ({ event }) => this.tutorial.handleEvent(event));
     engine.on('state', () => { if (!this.animating) this.render(); });
     engine.on('toast', ({ text, kind }) => this.toast(text, kind));
     // End-of-round overlays wait until the scoring animation has finished.
@@ -182,6 +186,7 @@ export class UI {
   showMenuScreen() {
     $('screen-run').classList.add('hidden');
     $('screen-menu').classList.remove('hidden');
+    this.tutorial.stop(false);
     this.closeOverlay();
   }
 
@@ -205,6 +210,9 @@ export class UI {
       if (!this.animating) this.previewHand();
     }
     this.syncMood();
+    // The stage is rebuilt from scratch, so the tutorial has to re-find
+    // whatever it is pointing at.
+    this.tutorial.sync();
   }
 
   // ── sidebar ─────────────────────────────────────────────────────────
@@ -393,6 +401,7 @@ export class UI {
     this.layoutHand();
     this.previewHand();
     this.updateActionButtons();
+    this.tutorial.sync();
   }
 
   selectedCards() { return this.e.hand.filter((c) => this.selected.has(c.uid)); }
@@ -607,11 +616,13 @@ export class UI {
     overlay.appendChild(sheet);
     overlay.classList.remove('hidden');
     overlay.onclick = (ev) => { if (ev.target === overlay && !opts.sticky) this.closeOverlay(); };
+    this.tutorial.sync();
   }
 
   closeOverlay() {
     $('overlay').classList.add('hidden');
     $('overlay').innerHTML = '';
+    this.tutorial.sync();
   }
 
   infoSheet({ emoji, art, title, subtitle, subtitleColor, desc, badge, badgeClass, actions = [], onClose }) {

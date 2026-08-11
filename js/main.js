@@ -5,6 +5,7 @@ import { UI } from './ui.js';
 import { DECKS, DECK_KEYS } from './data.js';
 import { randomSeed } from './rng.js';
 import { audio } from './audio.js';
+import { Tutorial, clearTutorialSeen } from './tutorial.js';
 
 const SAVE_KEY = 'balatro.save.v2';
 const PROFILE_KEY = 'balatro.profile.v1';
@@ -15,6 +16,7 @@ class App {
     this.engine = new Engine();
     this.ui = new UI(this.engine, this);
     this.selectedDeck = 'red';
+    this.wantTutorial = false;
 
     this.profile = this.loadProfile();
     this.engine.on('state', () => this.save());
@@ -67,16 +69,18 @@ class App {
       list.appendChild(node);
     }
 
-    $('btn-new-run').addEventListener('click', () => {
-      $('run-setup').classList.remove('hidden');
-      $('run-setup').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    });
-    $('btn-cancel-setup').addEventListener('click', () => $('run-setup').classList.add('hidden'));
+    $('btn-new-run').addEventListener('click', () => this.showDeckChooser(true));
+    $('btn-cancel-setup').addEventListener('click', () => this.showDeckChooser(false));
     $('btn-start').addEventListener('click', () => this.startRun());
     $('btn-continue').addEventListener('click', () => this.continueRun());
     $('btn-how').addEventListener('click', () => this.showHowTo());
     $('btn-audio').addEventListener('click', () => this.ui.showAudioSettings());
     $('btn-collection').addEventListener('click', () => this.showCollection());
+  }
+
+  showDeckChooser(on) {
+    $('run-setup').classList.toggle('hidden', !on);
+    $('screen-menu').classList.toggle('choosing', on);
   }
 
   refreshContinue() {
@@ -95,9 +99,14 @@ class App {
     const raw = $('seed-input').value.trim().toUpperCase();
     const seed = raw || randomSeed();
     this.engine.newRun({ seed, deck: this.selectedDeck });
-    $('run-setup').classList.add('hidden');
+    this.showDeckChooser(false);
     this.ui.selected.clear();
     this.ui.showRunScreen();
+    // Coach the very first run, and any run started from "Replay Tutorial".
+    if (this.wantTutorial || Tutorial.shouldAutoStart(this.profile)) {
+      this.wantTutorial = false;
+      this.ui.tutorial.start();
+    }
   }
 
   continueRun() {
@@ -157,12 +166,33 @@ class App {
       <h3>Skipping</h3>
       <p>Skip a Small or Big Blind to claim a <b>Tag</b> instead of the cash reward. Risky, but tags are powerful.</p>
     `;
+    const row = document.createElement('div');
+    row.className = 'row-buttons';
+    const replay = document.createElement('button');
+    replay.className = 'btn btn-gold';
+    replay.textContent = 'Replay Tutorial';
+    replay.addEventListener('click', () => this.replayTutorial());
+    row.appendChild(replay);
     const close = document.createElement('button');
     close.className = 'btn btn-ghost';
     close.textContent = 'Close';
     close.addEventListener('click', () => this.ui.closeOverlay());
-    node.appendChild(close);
+    row.appendChild(close);
+    node.appendChild(row);
     this.ui.openOverlay(node);
+  }
+
+  // Mid-run there is nothing sensible to coach through, so the tutorial is
+  // armed for the next new run instead of interrupting this one.
+  replayTutorial() {
+    clearTutorialSeen();
+    this.wantTutorial = true;
+    this.ui.closeOverlay();
+    if (this.engine.seed && !$('screen-run').classList.contains('hidden')) {
+      this.ui.toast('Tutorial will run on your next new run', 'good');
+    } else {
+      this.showDeckChooser(true);
+    }
   }
 
   async showCollection() {

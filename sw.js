@@ -1,5 +1,5 @@
 // Offline shell. Bump CACHE_VERSION whenever the asset list changes.
-const CACHE_VERSION = 'balatro-v9';
+const CACHE_VERSION = 'balatro-v10';
 
 // "./" is the app shell. "./index.html" is deliberately not listed too: the
 // host serves clean URLs and redirects that path, and redirected responses are
@@ -21,6 +21,7 @@ const ASSETS = [
   './js/audio.js',
   './js/art.js',
   './js/haptics.js',
+  './js/tutorial.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
