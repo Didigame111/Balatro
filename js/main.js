@@ -7,6 +7,7 @@ import { randomSeed } from './rng.js';
 import { audio } from './audio.js';
 
 const SAVE_KEY = 'balatro.save.v2';
+const PROFILE_KEY = 'balatro.profile.v1';
 const $ = (id) => document.getElementById(id);
 
 class App {
@@ -15,9 +16,39 @@ class App {
     this.ui = new UI(this.engine, this);
     this.selectedDeck = 'red';
 
+    this.profile = this.loadProfile();
     this.engine.on('state', () => this.save());
+    this.engine.on('game_over', () => this.recordRun(false));
+    this.engine.on('won', () => this.recordRun(true));
     this.buildMenu();
     this.refreshContinue();
+  }
+
+  // ── profile: what carries across runs ───────────────────────────────
+  loadProfile() {
+    const blank = { runs: 0, wins: 0, bestScore: 0, bestAnte: 0, handsPlayed: 0, decksWon: {} };
+    try {
+      const raw = localStorage.getItem(PROFILE_KEY);
+      return raw ? Object.assign(blank, JSON.parse(raw)) : blank;
+    } catch (err) { return blank; }
+  }
+
+  saveProfile() {
+    try { localStorage.setItem(PROFILE_KEY, JSON.stringify(this.profile)); } catch (err) { /* ignore */ }
+  }
+
+  recordRun(won) {
+    const e = this.engine;
+    const p = this.profile;
+    p.runs += 1;
+    if (won) {
+      p.wins += 1;
+      p.decksWon[e.deckKey] = (p.decksWon[e.deckKey] || 0) + 1;
+    }
+    p.bestScore = Math.max(p.bestScore, e.stats.bestHand || 0);
+    p.bestAnte = Math.max(p.bestAnte, e.ante || 0);
+    p.handsPlayed += e.stats.handsPlayed || 0;
+    this.saveProfile();
   }
 
   // ── menu ────────────────────────────────────────────────────────────
@@ -50,6 +81,14 @@ class App {
 
   refreshContinue() {
     $('btn-continue').classList.toggle('hidden', !localStorage.getItem(SAVE_KEY));
+    const p = this.profile;
+    const line = $('menu-profile');
+    if (!line) return;
+    if (!p.runs) { line.classList.add('hidden'); return; }
+    line.classList.remove('hidden');
+    line.innerHTML =
+      `<b>${p.wins}</b> win${p.wins === 1 ? '' : 's'} in <b>${p.runs}</b> run${p.runs === 1 ? '' : 's'}` +
+      ` &middot; best ante <b>${p.bestAnte}</b> &middot; best hand <b>${p.bestScore.toLocaleString()}</b>`;
   }
 
   startRun() {
@@ -129,44 +168,61 @@ class App {
   async showCollection() {
     const { JOKERS, JOKER_KEYS, RARITY } = await import('./jokers.js');
     const { CONSUMABLES, TAROT_KEYS, PLANET_KEYS, SPECTRAL_KEYS } = await import('./consumables.js');
+    const { jokerArt, consumableArt } = await import('./art.js');
+    const { haptics } = await import('./haptics.js');
+
     const node = document.createElement('div');
     node.innerHTML = '<h2>Collection</h2>';
 
-    const section = (title, keys, source) => {
+    const section = (title, keys, source, artOf) => {
       node.insertAdjacentHTML('beforeend', `<h3>${title} <span class="muted">(${keys.length})</span></h3>`);
       const grid = document.createElement('div');
-      grid.className = 'shop-grid';
+      grid.className = 'collection-grid';
       for (const key of keys) {
         const def = source[key];
         const item = document.createElement('div');
-        item.className = 'shop-item';
-        item.innerHTML =
-          `<div class="si-emoji">${def.emoji}</div><div class="si-name">${def.name}</div>` +
-          (def.rarity ? `<span class="si-rarity" style="background:${RARITY[def.rarity].color}"></span>` : '');
+        item.className = 'collection-item';
+        item.innerHTML = artOf(key, def);
+        item.title = def.name;
+        if (def.rarity) {
+          const dot = document.createElement('span');
+          dot.className = 'si-rarity';
+          dot.style.background = RARITY[def.rarity].color;
+          item.appendChild(dot);
+        }
         item.addEventListener('click', () => {
+          haptics.tap();
           this.ui.openOverlay(this.ui.infoSheet({
-            emoji: def.emoji,
+            art: artOf(key, def),
             title: def.name,
             subtitle: def.rarity ? RARITY[def.rarity].name : (def.kind || '').toUpperCase(),
             subtitleColor: def.rarity ? RARITY[def.rarity].color : null,
-            desc: typeof def.desc === 'function'
-              ? def.desc(def.rarity ? { key, state: {} } : null, null) || ''
-              : def.desc || '',
+            desc: describe(def, key),
             actions: [{ label: 'Back', onClick: () => this.showCollection() }],
-          }));
+          }), { narrow: true });
         });
         grid.appendChild(item);
       }
       node.appendChild(grid);
     };
 
-    try { section('Jokers', JOKER_KEYS, JOKERS); } catch (e) { /* description probes are best effort */ }
-    section('Tarots', TAROT_KEYS, CONSUMABLES);
-    section('Planets', PLANET_KEYS, CONSUMABLES);
-    section('Spectrals', SPECTRAL_KEYS, CONSUMABLES);
+    const describe = (def, key) => {
+      try {
+        return typeof def.desc === 'function'
+          ? def.desc(def.rarity ? { key, state: {} } : null, null) || ''
+          : def.desc || '';
+      } catch (err) {
+        return def.rarity ? 'Buy this Joker to see it in action.' : '';
+      }
+    };
+
+    section('Jokers', JOKER_KEYS, JOKERS, (key) => jokerArt(key));
+    section('Tarots', TAROT_KEYS, CONSUMABLES, (key) => consumableArt({ kind: 'tarot', key }, TAROT_KEYS.indexOf(key)));
+    section('Planets', PLANET_KEYS, CONSUMABLES, (key) => consumableArt({ kind: 'planet', key }));
+    section('Spectrals', SPECTRAL_KEYS, CONSUMABLES, (key) => consumableArt({ kind: 'spectral', key }));
 
     const close = document.createElement('button');
-    close.className = 'btn btn-ghost';
+    close.className = 'btn btn-gold';
     close.textContent = 'Close';
     close.addEventListener('click', () => this.ui.closeOverlay());
     node.appendChild(close);

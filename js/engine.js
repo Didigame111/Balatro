@@ -259,6 +259,17 @@ export class Engine {
   randomEnhancement() { return this.rng.pick(ENHANCEMENT_POOL); }
 
   // -- blinds --------------------------------------------------------------
+  // Both skippable blinds show the tag they would hand over, decided when the
+  // ante is rolled rather than at the moment you skip.
+  rollAnteTags() {
+    this.anteTags = { small: this.rollTag('small'), big: this.rollTag('big') };
+  }
+
+  tagFor(type) {
+    if (!this.anteTags) this.rollAnteTags();
+    return this.anteTags[type] || null;
+  }
+
   rollAnteBosses() {
     const finisher = this.ante % 8 === 0;
     const pool = finisher
@@ -266,6 +277,7 @@ export class Engine {
       : REGULAR_BOSS_KEYS.filter((k) => (BOSSES[k].minAnte || 1) <= this.ante);
     this.bossKey = this.rng.pick(pool.length ? pool : REGULAR_BOSS_KEYS);
     this.bossRerollsThisAnte = 0;
+    this.rollAnteTags();
   }
 
   blindOrder() { return ['small', 'big', 'boss']; }
@@ -368,7 +380,7 @@ export class Engine {
   skipBlind() {
     const type = this.currentBlindType;
     if (!BLIND_TYPES[type].skippable) return;
-    const tagKey = this.rollTag();
+    const tagKey = this.tagFor(type) || this.rollTag(type);
     this.stats.skips += 1;
     this.round += 1;
     this.gainTag(tagKey, 'Skipped Blind');
@@ -377,11 +389,8 @@ export class Engine {
     this.emit('state');
   }
 
-  rollTag() {
-    const pool = TAG_KEYS.filter((k) => {
-      if (k === 'boss' && this.currentBlindType === 'boss') return false;
-      return true;
-    });
+  rollTag(forType) {
+    const pool = TAG_KEYS.filter((k) => !(k === 'boss' && forType === 'boss'));
     return this.rng.pick(pool);
   }
 
@@ -1463,6 +1472,7 @@ export class Engine {
       stats: this.stats,
       lastConsumableUsed: this.lastConsumableUsed,
       bossKey: this.bossKey,
+      anteTags: this.anteTags,
       bossRerollsThisAnte: this.bossRerollsThisAnte,
       gameState: this.gameState,
       blind: this.blind,
@@ -1511,6 +1521,7 @@ export class Engine {
     e.stats = data.stats;
     e.lastConsumableUsed = data.lastConsumableUsed;
     e.bossKey = data.bossKey;
+    e.anteTags = data.anteTags || null;
     e.bossRerollsThisAnte = data.bossRerollsThisAnte || 0;
     e.gameState = data.gameState;
     e.blind = data.blind;

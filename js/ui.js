@@ -3,10 +3,12 @@
 import { SUITS, rankLabel, cardName, shortCardName, ENHANCEMENTS, EDITIONS, SEALS, cardChips } from './cards.js';
 import { HAND_ORDER, HAND_NAMES } from './poker.js';
 import { JOKERS, RARITY, jokerDesc } from './jokers.js';
-import { CONSUMABLES, consumableDesc } from './consumables.js';
-import { DECKS, VOUCHERS, PACK_BY_KEY, handValues, BASE_CONFIG } from './data.js';
+import { CONSUMABLES, consumableDesc, TAROT_KEYS } from './consumables.js';
+import { DECKS, VOUCHERS, PACK_BY_KEY, TAGS, handValues, BASE_CONFIG } from './data.js';
 import { RNG } from './rng.js';
 import { audio } from './audio.js';
+import { haptics } from './haptics.js';
+import { jokerArt, consumableArt, packArt, voucherArt, tagArt } from './art.js';
 
 const $ = (id) => document.getElementById(id);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -37,6 +39,15 @@ const PIP_LAYOUT = {
 const SPEED_KEY = 'balatro.speed.v1';
 const SPEEDS = { slow: 1.7, normal: 1, fast: 0.55 };
 
+// Art for anything that can sit in a card slot.
+function artFor(item) {
+  if (item.kind === 'joker') return jokerArt(item.key);
+  if (item.kind === 'pack') return packArt(PACK_BY_KEY[item.packKey].kind);
+  if (item.kind === 'voucher') return voucherArt();
+  if (item.kind === 'playing') return null;
+  return consumableArt({ kind: item.kind, key: item.key }, TAROT_KEYS.indexOf(item.key));
+}
+
 export class UI {
   constructor(engine, app) {
     this.e = engine;
@@ -56,12 +67,11 @@ export class UI {
     engine.on('state', () => { if (!this.animating) this.render(); });
     engine.on('toast', ({ text, kind }) => this.toast(text, kind));
     // End-of-round overlays wait until the scoring animation has finished.
-    engine.on('round_won', (s) => this.later(() => { audio.sfx('win'); this.showCashOut(s); }));
-    engine.on('game_over', (info) => this.later(() => { audio.sfx('lose'); this.showGameOver(info); }));
+    engine.on('round_won', (s) => this.later(() => { audio.sfx('win'); haptics.success(); this.showCashOut(s); }));
+    engine.on('game_over', (info) => this.later(() => { audio.sfx('lose'); haptics.fail(); this.showGameOver(info); }));
     engine.on('won', () => this.later(() => { audio.sfx('win'); this.showVictory(); }));
-    engine.on('pack_opened', () => { audio.sfx('pack'); this.showPack(); });
-    engine.on('pack_closed', () => this.closeOverlay());
-    engine.on('tag_gained', ({ tag }) => { audio.sfx('tag'); this.toast(`${tag.emoji} ${tag.name}`, 'good'); });
+    engine.on('pack_opened', () => { audio.sfx('pack'); haptics.bump(); });
+    engine.on('tag_gained', ({ tag }) => { audio.sfx('tag'); haptics.bump(); this.toast(`${tag.emoji} ${tag.name}`, 'good'); });
     engine.on('card_destroyed', () => audio.sfx('destroy'));
     engine.on('blind_started', () => audio.setMood(engine.blind.type === 'boss' && !engine.blind.disabled ? 'boss' : 'play'));
     engine.on('shop_opened', () => audio.setMood('shop'));
@@ -71,21 +81,28 @@ export class UI {
       if (name) this.toast(`${source}: ${name}`, 'good');
     });
     engine.on('hand_leveled', ({ key, level, amount, source }) => {
-      if (amount > 0) audio.sfx('levelup');
-      this.toast(`${source}: ${HAND_NAMES[key]} → lvl ${level}`, amount > 0 ? 'good' : 'warn');
+      // A single upgrade gets the full sidebar animation; bulk upgrades (Black
+      // Hole levels all twelve hands) fall back to a toast so it stays brisk.
+      if (this.animating || this.levellingUp) {
+        this.toast(`${source}: ${HAND_NAMES[key]} → lvl ${level}`, amount > 0 ? 'good' : 'warn');
+        if (amount > 0) audio.sfx('levelup');
+        return;
+      }
+      this.playLevelUp(key, level, amount, source);
     });
 
     window.addEventListener('resize', () => { if (!this.animating) this.render(); });
   }
 
   bindStaticControls() {
-    $('btn-play').addEventListener('click', () => this.onPlay());
-    $('btn-discard').addEventListener('click', () => this.onDiscard());
-    $('btn-sort-rank').addEventListener('click', () => this.setSort('rank'));
-    $('btn-sort-suit').addEventListener('click', () => this.setSort('suit'));
-    $('btn-runinfo').addEventListener('click', () => this.showRunInfo());
-    $('btn-options').addEventListener('click', () => this.showOptionsMenu());
-    $('deck-pile').addEventListener('click', () => this.showDeckView());
+    $('btn-play').addEventListener('click', () => { haptics.tap(); this.onPlay(); });
+    $('btn-discard').addEventListener('click', () => { haptics.tap(); this.onDiscard(); });
+    $('btn-sort-rank').addEventListener('click', () => { haptics.tap(); this.setSort('rank'); });
+    $('btn-sort-suit').addEventListener('click', () => { haptics.tap(); this.setSort('suit'); });
+    $('btn-runinfo').addEventListener('click', () => { haptics.tap(); this.showRunInfo(); });
+    $('btn-options').addEventListener('click', () => { haptics.tap(); this.showOptionsMenu(); });
+    $('deck-pile').addEventListener('click', () => { haptics.tap(); this.showDeckView(); });
+    haptics.attach($('haptic-tick'));
   }
 
   later(fn) {
@@ -144,11 +161,13 @@ export class UI {
   renderSidebar() {
     const e = this.e;
     const choosing = e.gameState === 'blind_select';
+    const shopping = e.gameState === 'shop' || e.gameState === 'pack';
 
     $('sb-choose').classList.toggle('hidden', !choosing);
-    $('sb-blind-panel').classList.toggle('hidden', choosing);
+    $('sb-shop-panel').classList.toggle('hidden', !shopping);
+    $('sb-blind-panel').classList.toggle('hidden', choosing || shopping);
 
-    if (!choosing && e.blind) {
+    if (!choosing && !shopping && e.blind) {
       const info = e.blindInfo(e.blind.type);
       const panel = $('sb-blind-panel');
       panel.classList.toggle('big', e.blind.type === 'big');
@@ -309,11 +328,12 @@ export class UI {
 
   toggleCard(card) {
     if (this.animating) return;
-    if (this.selected.has(card.uid)) { this.selected.delete(card.uid); audio.sfx('deselect'); }
+    if (this.selected.has(card.uid)) { this.selected.delete(card.uid); audio.sfx('deselect'); haptics.soft(); }
     else {
-      if (this.selected.size >= 5) { this.toast('Maximum 5 cards', 'warn'); return; }
+      if (this.selected.size >= 5) { this.toast('Maximum 5 cards', 'warn'); haptics.fail(); return; }
       this.selected.add(card.uid);
       audio.sfx('select');
+      haptics.select();
     }
     const node = $('hand-row').querySelector(`[data-uid="${card.uid}"]`);
     if (node) node.classList.toggle('selected', this.selected.has(card.uid));
@@ -338,11 +358,10 @@ export class UI {
       if (joker.edition) node.classList.add(`edition-${joker.edition}`);
       if (joker === e.disabledJoker) node.classList.add('disabled');
       if (joker.flipped) node.classList.add('flipped');
-      node.innerHTML =
-        `<span class="jt-emoji">${def.emoji || '🃏'}</span>` +
-        `<span class="jt-name">${def.name || joker.key}</span>` +
+      node.innerHTML = jokerArt(joker.key) +
         (joker.edition === 'negative' ? '<span class="neg-badge">NEG</span>' : '');
-      node.addEventListener('click', () => this.showJokerInfo(joker));
+      node.title = def.name || joker.key;
+      node.addEventListener('click', () => { haptics.tap(); this.showJokerInfo(joker); });
       jokers.appendChild(node);
     }
 
@@ -354,8 +373,9 @@ export class UI {
       const def = CONSUMABLES[card.key] || {};
       const node = h('div', `ctile kind-${def.kind || 'tarot'}`);
       if (card.negative) node.classList.add('edition-negative');
-      node.innerHTML = `<span class="jt-emoji">${def.emoji || '🎴'}</span>`;
-      node.addEventListener('click', () => this.showConsumableInfo(card));
+      node.innerHTML = consumableArt(card, TAROT_KEYS.indexOf(card.key));
+      node.title = def.name || card.key;
+      node.addEventListener('click', () => { haptics.tap(); this.showConsumableInfo(card); });
       cons.appendChild(node);
     }
   }
@@ -367,6 +387,8 @@ export class UI {
     stage.innerHTML = '';
     if (e.gameState === 'blind_select') this.renderBlindSelect(stage);
     else if (e.gameState === 'shop') this.renderShop(stage);
+    else if (e.gameState === 'pack') this.renderPack(stage);
+    $('table').dataset.pack = e.gameState === 'pack' && e.pack ? e.pack.def.kind : '';
   }
 
   renderBlindSelect(stage) {
@@ -389,7 +411,7 @@ export class UI {
 
     if (isCurrent && interactive) {
       const select = h('button', 'bc-state select', 'Select');
-      select.addEventListener('click', () => { this.selected.clear(); e.selectBlind(); });
+      select.addEventListener('click', () => { haptics.tap(); this.selected.clear(); e.selectBlind(); });
       col.appendChild(select);
     } else {
       col.appendChild(h('div', 'bc-state', index < currentIndex ? 'Defeated' : 'Upcoming'));
@@ -409,11 +431,22 @@ export class UI {
 
     if (info.skippable && interactive) {
       col.appendChild(h('div', 'bc-or', 'or'));
+      const tag = TAGS[e.tagFor(type)] || null;
       const skipRow = h('div', 'bc-skip');
-      skipRow.appendChild(h('div', 'bc-tag', '🎟'));
+      const tagBadge = h('div', 'bc-tag');
+      tagBadge.innerHTML = tagArt(tag ? tag.emoji : '🎟');
+      if (tag) tagBadge.title = `${tag.name} — ${tag.desc}`;
+      tagBadge.addEventListener('click', () => {
+        if (!tag) return;
+        haptics.tap();
+        this.openOverlay(this.infoSheet({
+          art: tagArt(tag.emoji), title: tag.name, subtitle: 'Skip Tag', desc: tag.desc,
+        }), { narrow: true });
+      });
+      skipRow.appendChild(tagBadge);
       const skip = h('button', 'bc-skip-btn', 'Skip Blind');
       skip.disabled = !isCurrent;
-      skip.addEventListener('click', () => e.skipBlind());
+      skip.addEventListener('click', () => { haptics.tap(); e.skipBlind(); });
       skipRow.appendChild(skip);
       col.appendChild(skipRow);
     } else if (type === 'boss') {
@@ -435,42 +468,62 @@ export class UI {
     const e = this.e;
     const shop = e.shop;
     if (!shop) return;
-    const wrap = h('div', 'shop-wrap');
-    wrap.appendChild(h('div', 'shop-head', '<h2>Shop</h2>'));
 
-    const grid = h('div', 'shop-grid');
-    for (const item of shop.items) grid.appendChild(this.shopItemEl(item));
-    if (shop.voucher) grid.appendChild(this.shopItemEl(shop.voucher));
-    for (const pack of shop.packs) grid.appendChild(this.shopItemEl(pack));
-    if (!grid.children.length) grid.appendChild(h('div', 'tray-empty', 'Sold out — reroll for more'));
-    wrap.appendChild(grid);
+    const panel = h('div', 'shop-panel');
 
-    const foot = h('div', 'shop-foot');
+    const top = h('div', 'shop-top');
+    const controls = h('div', 'shop-controls');
+    const next = h('button', 'shop-btn shop-btn-red', 'Next<br>Round');
+    next.addEventListener('click', () => { haptics.tap(); e.exitShop(); });
     const rerollCost = shop.freeRerolls > 0 ? 0 : shop.rerollCost;
-    const reroll = h('button', 'btn btn-red', `Reroll $${rerollCost}`);
-    reroll.addEventListener('click', () => e.rerollShop());
-    const next = h('button', 'btn btn-green', 'Next Round →');
-    next.addEventListener('click', () => e.exitShop());
-    foot.appendChild(reroll);
-    foot.appendChild(next);
-    wrap.appendChild(foot);
-    stage.appendChild(wrap);
+    const reroll = h('button', 'shop-btn shop-btn-green', `Reroll<br><b>$${rerollCost}</b>`);
+    reroll.addEventListener('click', () => { haptics.tap(); e.rerollShop(); });
+    controls.appendChild(next);
+    controls.appendChild(reroll);
+    top.appendChild(controls);
+
+    const rack = h('div', 'shop-rack');
+    for (const item of shop.items) rack.appendChild(this.shopItemEl(item));
+    if (!shop.items.length) rack.appendChild(h('div', 'tray-empty', 'Sold out'));
+    top.appendChild(rack);
+    panel.appendChild(top);
+
+    const bottom = h('div', 'shop-bottom');
+    const voucherBay = h('div', 'shop-bay shop-bay-voucher');
+    voucherBay.appendChild(h('div', 'bay-label', `Ante ${e.ante} Voucher`));
+    const voucherRack = h('div', 'shop-rack');
+    if (shop.voucher) voucherRack.appendChild(this.shopItemEl(shop.voucher));
+    else voucherRack.appendChild(h('div', 'tray-empty', 'Redeemed'));
+    voucherBay.appendChild(voucherRack);
+    bottom.appendChild(voucherBay);
+
+    const packBay = h('div', 'shop-bay');
+    const packRack = h('div', 'shop-rack');
+    for (const pack of shop.packs) packRack.appendChild(this.shopItemEl(pack));
+    if (!shop.packs.length) packRack.appendChild(h('div', 'tray-empty', 'No packs'));
+    packBay.appendChild(packRack);
+    bottom.appendChild(packBay);
+
+    panel.appendChild(bottom);
+    stage.appendChild(panel);
   }
 
   shopItemEl(item) {
     const node = h('div', 'shop-item');
     const view = this.describeItem(item);
-    node.innerHTML =
-      `<div class="si-emoji">${view.emoji}</div>` +
-      `<div class="si-name">${view.name}</div>` +
-      `<div class="si-cost ${item.cost === 0 ? 'free' : ''}">${item.cost === 0 ? 'FREE' : `$${item.cost}`}</div>` +
-      (view.rarityColor ? `<span class="si-rarity" style="background:${view.rarityColor}"></span>` : '');
-    if (item.kind === 'playing' && item.card) {
-      const wrap = h('div', 'mini-card-wrap');
-      wrap.appendChild(this.cardEl(item.card));
-      node.replaceChild(wrap, node.querySelector('.si-emoji'));
+    const art = artFor(item);
+    const slot = h('div', 'shop-card');
+    if (art) slot.innerHTML = art;
+    else slot.appendChild(this.cardEl(item.card));
+    node.appendChild(slot);
+    node.appendChild(h('div', `price-tag ${item.cost === 0 ? 'free' : ''}`, item.cost === 0 ? 'FREE' : `$${item.cost}`));
+    if (view.rarityColor) {
+      const dot = h('span', 'si-rarity');
+      dot.style.background = view.rarityColor;
+      node.appendChild(dot);
     }
-    node.addEventListener('click', () => this.showShopItemInfo(item));
+    node.title = view.name;
+    node.addEventListener('click', () => { haptics.tap(); this.showShopItemInfo(item); });
     return node;
   }
 
@@ -506,11 +559,11 @@ export class UI {
     $('overlay').innerHTML = '';
   }
 
-  infoSheet({ emoji, title, subtitle, subtitleColor, desc, actions = [], onClose }) {
+  infoSheet({ emoji, art, title, subtitle, subtitleColor, desc, actions = [], onClose }) {
     const node = h('div');
     node.innerHTML =
       `<div class="info-head">
-         <div class="info-emoji">${emoji}</div>
+         <div class="${art ? 'info-art' : 'info-emoji'}">${art || emoji}</div>
          <div class="info-title"><b>${title}</b><span style="color:${subtitleColor || 'var(--ink-dim)'}">${subtitle || ''}</span></div>
        </div>
        <div class="info-desc">${desc}</div>`;
@@ -550,7 +603,7 @@ export class UI {
     if (index > 0) actions.push({ label: '◀', onClick: () => e.moveJoker(index, index - 1) });
     if (index < e.jokers.length - 1) actions.push({ label: '▶', onClick: () => e.moveJoker(index, index + 1) });
     this.openOverlay(this.infoSheet({
-      emoji: def.emoji || '🃏',
+      art: jokerArt(joker.key),
       title: def.name || joker.key,
       subtitle: `${RARITY[def.rarity] ? RARITY[def.rarity].name : ''}${joker.edition ? ` · ${EDITIONS[joker.edition].name}` : ''}`,
       subtitleColor: RARITY[def.rarity] ? RARITY[def.rarity].color : null,
@@ -569,7 +622,7 @@ export class UI {
     const usableNow = e.gameState === 'playing' || min === 0;
     const sellFor = Math.max(1, Math.floor((def.cost || 3) / 2));
     this.openOverlay(this.infoSheet({
-      emoji: def.emoji || '🎴',
+      art: consumableArt(card, TAROT_KEYS.indexOf(card.key)),
       title: def.name || card.key,
       subtitle: (def.kind || '').toUpperCase(),
       desc: consumableDesc(card, e) + hint + (check.ok ? '' : `<br><span style="color:var(--gold)">${check.reason}</span>`),
@@ -619,6 +672,7 @@ export class UI {
     }
     const affordable = e.canAfford(item.cost);
     this.openOverlay(this.infoSheet({
+      art: artFor(item),
       emoji: view.emoji,
       title: view.name,
       subtitle,
@@ -637,40 +691,39 @@ export class UI {
   }
 
   // ── pack opening ────────────────────────────────────────────────────
-  showPack() {
+  renderPack(stage) {
     const e = this.e;
     const pack = e.pack;
     if (!pack) return;
-    const node = h('div');
-    node.appendChild(h('h2', null, pack.def.name));
-    node.appendChild(h('p', null, `Choose ${pack.remaining} of ${pack.options.length}`));
-    const grid = h('div', 'pack-grid');
-    for (const option of pack.options) {
-      const item = h('div', 'shop-item');
-      let emoji = '🎴';
-      let name = '';
-      if (option.kind === 'joker') { const d = JOKERS[option.key]; emoji = d.emoji; name = d.name; }
-      else if (option.kind === 'playing') { emoji = ''; name = shortCardName(option.card); }
-      else { const d = CONSUMABLES[option.key]; emoji = d.emoji; name = d.name; }
-      item.innerHTML = `<div class="si-emoji">${emoji}</div><div class="si-name">${name}</div>`;
-      if (option.kind === 'playing') {
-        const wrap = h('div', 'mini-card-wrap');
-        wrap.appendChild(this.cardEl(option.card));
-        item.replaceChild(wrap, item.querySelector('.si-emoji'));
-      }
-      item.addEventListener('click', () => this.showPackOptionInfo(option));
-      grid.appendChild(item);
-    }
-    node.appendChild(grid);
-    const skip = h('button', 'btn btn-ghost', 'Skip Pack');
-    skip.addEventListener('click', () => { e.skipPack(); this.closeOverlay(); });
-    node.appendChild(skip);
-    this.openOverlay(node, { sticky: true });
+
+    const wrap = h('div', 'pack-stage');
+    const row = h('div', 'pack-row');
+    pack.options.forEach((option, i) => {
+      const node = h('div', 'pack-option');
+      node.style.animationDelay = `${i * 70}ms`;
+      if (option.kind === 'playing') node.appendChild(this.cardEl(option.card));
+      else node.innerHTML = artFor(option);
+      node.addEventListener('click', () => { haptics.tap(); this.showPackOptionInfo(option); });
+      row.appendChild(node);
+    });
+    wrap.appendChild(row);
+
+    const bar = h('div', 'pack-bar');
+    const label = h('div', 'pack-label');
+    label.innerHTML = `<b>${pack.def.name}</b><span>Choose ${pack.remaining}</span>`;
+    bar.appendChild(label);
+    const skip = h('button', 'pack-skip', 'Skip');
+    skip.addEventListener('click', () => { haptics.tap(); e.skipPack(); });
+    bar.appendChild(skip);
+    wrap.appendChild(bar);
+
+    stage.appendChild(wrap);
   }
 
   showPackOptionInfo(option) {
     const e = this.e;
     let emoji = '🎴';
+    let art = option.kind === 'playing' ? null : artFor(option);
     let title = '';
     let desc = '';
     let subtitle = '';
@@ -691,13 +744,12 @@ export class UI {
       desc = consumableDesc({ key: option.key }, e);
     }
     this.openOverlay(this.infoSheet({
-      emoji, title, subtitle, desc,
+      emoji, art, title, subtitle, desc,
       actions: [{
         label: 'Take', cls: 'btn-green',
-        onClick: () => { e.takePackOption(option); if (e.pack) this.showPack(); },
+        onClick: () => { e.takePackOption(option); },
       }],
-      onClose: () => { if (e.pack) this.showPack(); },
-    }), { sticky: true, narrow: true });
+    }), { narrow: true });
   }
 
   // ── end of round ────────────────────────────────────────────────────
@@ -804,6 +856,17 @@ export class UI {
     };
     toggleRow('Music', 'music');
     toggleRow('Sound Effects', 'sfx');
+
+    const hapticRow = h('div', 'opt-row');
+    hapticRow.appendChild(h('span', null, 'Vibration'));
+    const hapticBtn = h('button', `btn btn-tiny ${haptics.enabled ? 'btn-gold' : 'btn-ghost'}`, haptics.enabled ? 'ON' : 'OFF');
+    hapticBtn.addEventListener('click', () => {
+      haptics.set(!haptics.enabled);
+      hapticBtn.className = `btn btn-tiny ${haptics.enabled ? 'btn-gold' : 'btn-ghost'}`;
+      hapticBtn.textContent = haptics.enabled ? 'ON' : 'OFF';
+    });
+    hapticRow.appendChild(hapticBtn);
+    node.appendChild(hapticRow);
 
     const volRow = h('div', 'opt-row');
     volRow.appendChild(h('span', null, 'Volume'));
@@ -932,6 +995,19 @@ export class UI {
     ];
     for (const [label, value] of rows) stats.appendChild(h('div', 'cash-line', `<span>${label}</span><b>${value}</b>`));
     node.appendChild(stats);
+
+    const p = this.app.profile;
+    if (p && p.runs) {
+      node.appendChild(h('h3', null, 'Career'));
+      const career = h('div');
+      for (const [label, value] of [
+        ['Runs', p.runs], ['Wins', p.wins],
+        ['Furthest ante', p.bestAnte], ['Best hand ever', fmt(p.bestScore)],
+        ['Hands played', p.handsPlayed],
+      ]) career.appendChild(h('div', 'cash-line', `<span>${label}</span><b>${value}</b>`));
+      node.appendChild(career);
+    }
+
     const back = h('button', 'btn btn-gold', 'Back');
     back.addEventListener('click', () => this.showOptionsMenu());
     node.appendChild(back);
@@ -1048,6 +1124,70 @@ export class UI {
     });
   }
 
+  // Balatro's planet-card flourish: the hand name appears, the level ticks
+  // over, then the chip and mult gains land one after the other.
+  async playLevelUp(key, level, amount, source) {
+    const e = this.e;
+    const from = Math.max(1, level - amount);
+    const before = handValues(key, from);
+    const after = handValues(key, level);
+    const nameEl = $('sb-hand-name');
+    const levelEl = $('sb-hand-level');
+    const chipsEl = $('sb-chips');
+    const multEl = $('sb-mult');
+    const unit = 300 * this.speedMult;
+
+    this.levellingUp = true;
+    const down = amount < 0;
+
+    nameEl.textContent = HAND_NAMES[key];
+    nameEl.classList.add('pulse');
+    levelEl.textContent = `lvl.${from}`;
+    levelEl.classList.remove('hidden');
+    chipsEl.textContent = fmt(before.chips);
+    multEl.textContent = fmt(before.mult);
+    audio.sfx('select');
+    haptics.select();
+    await wait(unit);
+
+    levelEl.textContent = `lvl.${level}`;
+    levelEl.classList.add('bump');
+    audio.sfx('levelup');
+    haptics.levelUp();
+    await wait(unit * 0.9);
+    levelEl.classList.remove('bump');
+
+    const chipGain = after.chips - before.chips;
+    if (chipGain) {
+      chipsEl.textContent = fmt(after.chips);
+      chipsEl.classList.add('gain');
+      this.floatAt(chipsEl, `${down ? '' : '+'}${chipGain}`, 'chips');
+      audio.sfx('chip');
+      haptics.bump();
+      await wait(unit * 0.8);
+      chipsEl.classList.remove('gain');
+    }
+
+    const multGain = after.mult - before.mult;
+    if (multGain) {
+      multEl.textContent = fmt(after.mult);
+      multEl.classList.add('gain');
+      this.floatAt(multEl, `${down ? '' : '+'}${multGain}`, 'mult');
+      audio.sfx('mult');
+      haptics.bump();
+      await wait(unit * 0.8);
+      multEl.classList.remove('gain');
+    }
+
+    await wait(unit * 0.7);
+    nameEl.classList.remove('pulse');
+    this.levellingUp = false;
+    if (this.e === e) {
+      if (e.gameState === 'playing') this.previewHand();
+      else { nameEl.textContent = ''; levelEl.classList.add('hidden'); chipsEl.textContent = '0'; multEl.textContent = '0'; }
+    }
+  }
+
   async animateScore(result) {
     const steps = result.steps;
     // Pace off the number of things that actually change a number, so a plain
@@ -1071,6 +1211,7 @@ export class UI {
         const node = this.playedNode(step.card);
         if (node) { node.classList.remove('scoring'); void node.offsetWidth; node.classList.add('scoring'); }
         audio.sfx('chip');
+        haptics.soft();
         await wait(unit * 0.8);
       } else if (step.type === 'card_debuffed') {
         const node = this.playedNode(step.card);
@@ -1085,6 +1226,7 @@ export class UI {
           : this.jokerNodeByName(step.source);
         for (const part of step.parts) this.floatAt(anchor, partText(part), part.kind);
         this.sfxForEffect(step);
+        haptics.bump();
         await wait(unit);
       } else if (step.type === 'balance') {
         chipsEl.textContent = fmt(step.chips);
@@ -1096,6 +1238,7 @@ export class UI {
         multEl.textContent = fmt(round2(step.mult));
         await wait(unit * 2.4);
         audio.sfx('levelup');
+        haptics.heavy();
         this.floatAt($('sb-score'), `+${fmt(step.score)}`, 'money');
         $('sb-score').textContent = fmt(this.e.score);
         // Let the result sit long enough to actually read it.

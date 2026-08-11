@@ -48,6 +48,7 @@
         </div>
       </div>
 
+      <p id="menu-profile" class="menu-profile hidden"></p>
       <p class="footnote">Add to Home Screen for full-screen play. Runs offline.</p>
     </div>
   </section>
@@ -57,6 +58,11 @@
 
     <aside id="sidebar">
       <div id="sb-choose" class="sb-choose hidden">Choose your<br>next Blind</div>
+
+      <div id="sb-shop-panel" class="sb-shop-panel hidden">
+        <div class="shop-marquee"><span>SHOP</span></div>
+        <div class="shop-marquee-sub">Improve your run!</div>
+      </div>
 
       <div id="sb-blind-panel" class="sb-blind-panel">
         <div id="sb-blind-title" class="sb-blind-title">Small Blind</div>
@@ -146,6 +152,11 @@
   <div id="toasts" class="toasts"></div>
   <div id="fx" class="fx"></div>
 </div>
+
+<!-- Toggling a switch control is the only way to reach the Taptic Engine
+     from Safari; it is hidden and driven from js/haptics.js. -->
+<input type="checkbox" switch id="haptic-tick" tabindex="-1" aria-hidden="true"
+       style="position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;left:-100px">
 
 <div id="rotate-notice">
   <div>

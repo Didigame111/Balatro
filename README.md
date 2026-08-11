@@ -9,8 +9,8 @@ to match the original's screen.
 
 A personal project: everything here is written from scratch. There is no build
 step, no framework and no network dependency — just plain ES modules, one
-stylesheet, a service worker, and music, sound effects and icons that are all
-generated in code rather than shipped as files.
+stylesheet, a service worker, and card art, music, sound effects and icons that
+are all generated in code rather than shipped as files.
 
 <p align="center">
   <img src="icons/icon-192.png" width="96" alt="App icon">
@@ -120,10 +120,23 @@ continue into endless mode if you want to see how far the numbers go.
 | Settings, stats, collection, deck, quit | **Options** in the sidebar |
 | View the full deck | Tap the deck pile |
 
+Skipping a Small or Big Blind shows the exact Tag you would get before you
+commit — tap the tag to read what it does.
+
+Using a Planet card plays the original's flourish: the poker hand's name
+appears in the sidebar, the level pill snaps over, then the chip and mult gains
+land one after the other with a vibration on each.
+
 Scoring is paced so you can follow it: the played cards stay on the felt, each
 one pops as it scores, and the hand is only refilled once the whole sequence has
 finished. **Settings → Scoring speed** switches between Slow, Normal and Fast if
 the default is not to your taste.
+
+**Vibration** is on by default and can be switched off in Settings. It fires on
+taps, each chip in a scoring run, multipliers landing, level-ups and wins. Note
+that iOS Safari does not implement the Vibration API — the game falls back to
+toggling a hidden switch control, which ticks the Taptic Engine on iOS 17.4+,
+but on older iOS it will be silent. Android gets the real thing.
 
 As soon as you select cards, the sidebar names the hand you are holding, shows
 its current level, and fills in the base Chips × Mult it will score with — so you
@@ -145,6 +158,8 @@ can compare two possible hands before committing one.
   (Gold, Red, Blue, Purple).
 - Seeded runs — enter a seed on the setup screen and the whole run, shop rolls
   included, is reproducible.
+- A **career profile** across runs: wins, runs played, furthest ante and best
+  hand, shown on the title screen and under Options → Stats.
 
 ## Layout
 
@@ -157,7 +172,17 @@ counters.
 
 **Table** — Joker and consumable trays across the top with their slot counts,
 the felt where played cards resolve, your hand fanned in an arc along the
-bottom, the Play / Sort / Discard controls, and the draw pile in the corner.
+bottom, the Play / Sort / Discard controls, and the draw pile in the corner. The
+felt is a slowly drifting marbled green, and it tints to match whatever booster
+pack you have open.
+
+**Shop** — a bordered panel with Next Round and Reroll on the left, the stock
+rack beside them, and the ante's voucher and the booster packs below, each card
+wearing its price on a tag hung over the top edge.
+
+**Booster packs** open on the felt rather than in a dialog: the contents deal in
+face-up, with the pack name and how many you may take on a bar at the bottom
+next to Skip.
 
 Cards are drawn in CSS with real pip layouts — a nine shows nine pips in the
 traditional arrangement, aces get a single large pip, court cards a framed
@@ -165,6 +190,25 @@ index — plus corner indices at both ends. Pip columns sit inboard of the indic
 and the rows start below them, so nothing collides at phone size. Enhancements
 tint the face, editions wash it with a gradient, and seals show as a coloured
 dot.
+
+## Card art
+
+Nothing is an emoji and nothing is an image file. `js/art.js` draws every card
+as inline SVG.
+
+Most Jokers are a **parameterised jester** — hat shape, face, and a ten-colour
+palette set — which is how the original's cast mostly looks, and gives 143
+distinct characters from a small amount of code. Jokers that are plainly an
+object instead of a character get one of forty hand-drawn **motifs**: a banana
+for Gros Michel, a skull for Mr. Bones, a raised fist, a bowl of ramen, an
+obelisk, a rocket. Planets get a shaded body with a ring against a starfield,
+Tarots a framed sigil with their roman numeral, Spectrals a ghost, and boosters
+a wrapper tinted to what is inside.
+
+The generated markup is covered by tests: every card must produce a real
+drawing, gradient ids must not collide across a full board, art must be stable
+for a given key, and a motif name that does not exist must not silently fall
+back to a jester.
 
 ## Sound
 
@@ -214,6 +258,8 @@ js/data.js               hand levels, blinds, bosses, vouchers, tags, packs, dec
 js/jokers.js             every Joker definition and its hooks
 js/consumables.js        Tarot / Planet / Spectral definitions
 js/audio.js              Web Audio synth: the band, the sequencer and the SFX
+js/art.js                SVG card art: the jester generator and the motifs
+js/haptics.js            vibration, with the iOS switch-control fallback
 js/engine.js             run state, scoring pipeline, shop, progression, saves
 js/ui.js                 rendering, touch handling, scoring animation
 js/main.js               menu wiring, autosave, service worker registration
@@ -238,7 +284,7 @@ That split is what lets the test suite play thousands of hands headlessly.
 ## Development
 
 ```bash
-npm test              # 57 tests: poker rules, scoring, audio theory, full runs
+npm test              # 63 tests: poker, scoring, audio theory, art, full runs
 npm run icons         # regenerate icons/*.png
 ```
 

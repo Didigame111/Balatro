@@ -1,5 +1,5 @@
 // Offline shell. Bump CACHE_VERSION whenever the asset list changes.
-const CACHE_VERSION = 'balatro-v4';
+const CACHE_VERSION = 'balatro-v5';
 
 const ASSETS = [
   './',
@@ -16,6 +16,8 @@ const ASSETS = [
   './js/consumables.js',
   './js/rng.js',
   './js/audio.js',
+  './js/art.js',
+  './js/haptics.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
