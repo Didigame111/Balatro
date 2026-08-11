@@ -5,7 +5,7 @@
 <title>Balatro</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="description" content="A poker roguelike deck-builder built as an offline-capable web app for iPhone.">
-<meta name="theme-color" content="#232b33">
+<meta name="theme-color" content="#1d3b34">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -28,9 +28,11 @@
       <div class="menu-buttons">
         <button id="btn-continue" class="btn btn-big btn-blue hidden">Continue Run</button>
         <button id="btn-new-run" class="btn btn-big btn-red">New Run</button>
-        <button id="btn-collection" class="btn btn-small">Collection</button>
-        <button id="btn-how" class="btn btn-small">How to Play</button>
-        <button id="btn-audio" class="btn btn-small">Sound</button>
+        <div class="menu-small-row">
+          <button id="btn-collection" class="btn btn-small">Collection</button>
+          <button id="btn-how" class="btn btn-small">How to Play</button>
+          <button id="btn-audio" class="btn btn-small">Sound</button>
+        </div>
       </div>
 
       <div id="run-setup" class="panel hidden">
@@ -46,93 +48,111 @@
         </div>
       </div>
 
-      <p class="footnote">Add to Home Screen for full-screen play.<br>Runs entirely offline. Progress saves automatically.</p>
+      <p class="footnote">Add to Home Screen for full-screen play. Runs offline.</p>
     </div>
   </section>
 
   <!-- ── Run screen ───────────────────────────────────────────────── -->
   <section id="screen-run" class="screen hidden">
 
-    <header id="hud">
-      <button id="hud-menu" class="hud-btn" aria-label="Menu">☰</button>
-      <div class="hud-block">
-        <span class="hud-label">Ante</span>
-        <span id="hud-ante" class="hud-value">1<span class="hud-sub">/8</span></span>
-      </div>
-      <div class="hud-block">
-        <span class="hud-label">Round</span>
-        <span id="hud-round" class="hud-value">1</span>
-      </div>
-      <div class="hud-block hud-money">
-        <span class="hud-label">Money</span>
-        <span id="hud-money" class="hud-value">$4</span>
-      </div>
-      <button id="hud-deck" class="hud-btn" aria-label="View deck">🎴</button>
-    </header>
+    <aside id="sidebar">
+      <div id="sb-choose" class="sb-choose hidden">Choose your<br>next Blind</div>
 
-    <div id="blind-banner" class="blind-banner hidden">
-      <div class="bb-icon" id="bb-icon">🔹</div>
-      <div class="bb-text">
-        <div class="bb-name" id="bb-name">Small Blind</div>
-        <div class="bb-desc" id="bb-desc"></div>
-      </div>
-      <div class="bb-req">
-        <div class="bb-req-label">Score at least</div>
-        <div class="bb-req-value" id="bb-req">300</div>
-      </div>
-    </div>
-
-    <div id="score-bar" class="score-bar hidden">
-      <div class="sb-round">
-        <span class="sb-label">Round score</span>
-        <span class="sb-value" id="sb-score">0</span>
-      </div>
-      <div class="sb-progress"><div class="sb-progress-fill" id="sb-fill"></div></div>
-    </div>
-
-    <div id="calc-row" class="calc-row hidden">
-      <div class="calc-chips" id="calc-chips">0</div>
-      <div class="calc-x">×</div>
-      <div class="calc-mult" id="calc-mult">0</div>
-      <div class="calc-hand" id="calc-hand"></div>
-    </div>
-
-    <div id="jokers-strip" class="strip">
-      <div class="strip-head"><span id="jokers-count">0/5</span></div>
-      <div id="jokers-row" class="card-row"></div>
-    </div>
-
-    <div id="consumables-strip" class="strip strip-small">
-      <div class="strip-head"><span id="cons-count">0/2</span></div>
-      <div id="consumables-row" class="card-row"></div>
-    </div>
-
-    <main id="stage"></main>
-
-    <div id="play-area" class="play-area hidden"></div>
-
-    <footer id="hand-dock" class="hidden">
-      <div id="hand-row" class="hand-row"></div>
-      <div class="action-row">
-        <button id="btn-play" class="btn btn-blue btn-action">Play Hand</button>
-        <div class="sort-group">
-          <button id="btn-sort-rank" class="btn btn-tiny active">Rank</button>
-          <button id="btn-sort-suit" class="btn btn-tiny">Suit</button>
+      <div id="sb-blind-panel" class="sb-blind-panel">
+        <div id="sb-blind-title" class="sb-blind-title">Small Blind</div>
+        <div class="sb-blind-body">
+          <div id="sb-blind-chip" class="blind-chip"></div>
+          <div class="sb-blind-info">
+            <div class="sb-mini-label">Score at least</div>
+            <div class="sb-blind-req"><i class="chip"></i><span id="sb-blind-req">300</span></div>
+            <div class="sb-blind-reward">Reward: <span id="sb-blind-reward">$$$</span></div>
+          </div>
         </div>
-        <button id="btn-discard" class="btn btn-red btn-action">Discard</button>
+        <div id="sb-blind-desc" class="sb-blind-desc"></div>
       </div>
-      <div class="counters">
-        <div class="counter counter-hands"><span id="ct-hands">4</span><small>Hands</small></div>
-        <div class="counter counter-discards"><span id="ct-discards">3</span><small>Discards</small></div>
-        <div class="counter counter-deck"><span id="ct-deck">52/52</span><small>Deck</small></div>
+
+      <div class="sb-roundscore">
+        <span class="sb-mini-label">Round<br>score</span>
+        <div class="sb-value-box"><i class="chip"></i><span id="sb-score">0</span></div>
       </div>
-    </footer>
+
+      <div class="sb-handzone">
+        <div id="sb-hand-name" class="sb-hand-name"></div>
+        <div id="sb-hand-level" class="sb-hand-level hidden">lvl.1</div>
+        <div class="sb-calc">
+          <div id="sb-chips" class="calc-chips">0</div>
+          <div class="calc-x">X</div>
+          <div id="sb-mult" class="calc-mult">0</div>
+        </div>
+      </div>
+
+      <div class="sb-bottom">
+        <div class="sb-col-left">
+          <button id="btn-runinfo" class="sb-btn sb-btn-red">Run<br>Info</button>
+          <button id="btn-options" class="sb-btn sb-btn-yellow">Options</button>
+        </div>
+        <div class="sb-col-right">
+          <div class="sb-stat"><small>Hands</small><b id="ct-hands" class="v-blue">4</b></div>
+          <div class="sb-stat"><small>Discards</small><b id="ct-discards" class="v-red">4</b></div>
+          <div class="sb-money" id="ct-money">$4</div>
+          <div class="sb-stat"><small>Ante</small><b class="v-gold"><span id="ct-ante">1</span><i>/8</i></b></div>
+          <div class="sb-stat"><small>Round</small><b class="v-gold" id="ct-round">1</b></div>
+        </div>
+      </div>
+    </aside>
+
+    <main id="table">
+      <div class="top-trays">
+        <div id="jokers-tray" class="tray">
+          <div id="jokers-row" class="tray-row"></div>
+          <div class="tray-count" id="jokers-count">0/5</div>
+        </div>
+        <div id="consumables-tray" class="tray tray-small">
+          <div id="consumables-row" class="tray-row"></div>
+          <div class="tray-count tray-count-right" id="cons-count">0/2</div>
+        </div>
+      </div>
+
+      <div id="stage"></div>
+
+      <div id="play-area" class="play-area hidden"></div>
+
+      <div id="hand-zone" class="hand-zone hidden">
+        <div id="hand-row" class="hand-row"></div>
+        <div class="hand-count" id="ct-handsize">8/8</div>
+      </div>
+
+      <div id="action-row" class="action-row hidden">
+        <button id="btn-play" class="act-btn act-play">Play Hand</button>
+        <div class="sort-box">
+          <div class="sort-label">Sort Hand</div>
+          <div class="sort-btns">
+            <button id="btn-sort-rank" class="sort-btn active">Rank</button>
+            <button id="btn-sort-suit" class="sort-btn">Suit</button>
+          </div>
+        </div>
+        <button id="btn-discard" class="act-btn act-discard">Discard</button>
+      </div>
+
+      <button id="deck-pile" class="deck-pile">
+        <span class="deck-back"></span>
+        <span class="deck-count" id="ct-deck">52/52</span>
+      </button>
+    </main>
   </section>
 
   <!-- ── Overlays ─────────────────────────────────────────────────── -->
   <div id="overlay" class="overlay hidden"></div>
   <div id="toasts" class="toasts"></div>
   <div id="fx" class="fx"></div>
+</div>
+
+<div id="rotate-notice">
+  <div>
+    <div class="rotate-icon">⟳</div>
+    <b>Rotate your device</b>
+    <span>Balatro plays in landscape</span>
+  </div>
 </div>
 
 <script type="module" src="js/main.js"></script>

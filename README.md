@@ -4,6 +4,9 @@ A poker roguelike deck-builder, rebuilt from scratch as an installable web app f
 iPhone. Play a poker hand, watch chips and multipliers explode, buy Jokers that
 break the rules, and try to survive eight Antes.
 
+**Plays in landscape** — sidebar on the left, felt table on the right, laid out
+to match the original's screen.
+
 A personal project: everything here is written from scratch. There is no build
 step, no framework and no network dependency — just plain ES modules, one
 stylesheet, a service worker, and music, sound effects and icons that are all
@@ -19,12 +22,14 @@ generated in code rather than shipped as files.
 2. Open the URL in **Safari** on the phone — it must be Safari, Chrome on iOS
    cannot add to the Home Screen.
 3. Tap the Share button → **Add to Home Screen**.
-4. Launch it from the Home Screen icon.
+4. Launch it from the Home Screen icon and **turn the phone sideways**.
 
 Installed, it runs full-screen with no browser chrome, respects the notch and
 home-indicator safe areas, and works with no connection at all. The layout is
-tuned for the iPhone 13's 390 × 844 pt viewport and scales down to smaller
-phones and up to Plus/Max sizes.
+tuned for the iPhone 13's 844 × 390 pt landscape viewport; cards, type and the
+sidebar all scale from the viewport, so smaller phones and iPads get the same
+proportions. Held in portrait it shows a rotate prompt — if nothing happens when
+you turn the phone, switch off Rotation Lock in Control Centre.
 
 Progress autosaves to `localStorage` after every action, so quitting mid-run and
 relaunching later picks up exactly where you left off.
@@ -111,8 +116,13 @@ continue into endless mode if you want to see how far the numbers go.
 | Inspect a card | Long-press |
 | Inspect / sell / reorder a Joker | Tap it |
 | Use a consumable | Select cards in hand first, then tap the consumable |
-| View the full deck | 🎴 in the header |
-| Run info, hand levels, sound, save & quit | ☰ in the header |
+| Poker hand levels, blinds, vouchers | **Run Info** in the sidebar |
+| Settings, stats, collection, deck, quit | **Options** in the sidebar |
+| View the full deck | Tap the deck pile |
+
+As soon as you select cards, the sidebar names the hand you are holding, shows
+its current level, and fills in the base Chips × Mult it will score with — so you
+can compare two possible hands before committing one.
 
 ## What is in it
 
@@ -130,6 +140,24 @@ continue into endless mode if you want to see how far the numbers go.
   (Gold, Red, Blue, Purple).
 - Seeded runs — enter a seed on the setup screen and the whole run, shop rolls
   included, is reproducible.
+
+## Layout
+
+The screen splits the way the original does.
+
+**Left sidebar** — the blind you are fighting and its target score, the round
+score so far, the hand readout (name, level, and the running Chips × Mult during
+scoring), then Run Info / Options and the hands, discards, money, ante and round
+counters.
+
+**Table** — Joker and consumable trays across the top with their slot counts,
+the felt where played cards resolve, your hand fanned in an arc along the
+bottom, the Play / Sort / Discard controls, and the draw pile in the corner.
+
+Cards are drawn in CSS with real pip layouts — a nine shows nine pips in the
+traditional arrangement, aces get a single large pip, court cards a framed
+index — plus corner indices at both ends. Enhancements tint the face, editions
+wash it with a gradient, and seals show as a coloured dot.
 
 ## Sound
 

@@ -202,7 +202,7 @@ window.addEventListener('keydown', unlockAudio);
 // A soft click on anything button-like. Cards and the play/discard buttons
 // have their own, more specific cues.
 document.addEventListener('click', (e) => {
-  const target = e.target.closest && e.target.closest('.btn, .hud-btn, .shop-item, .deck-item, .jtile, .ctile');
+  const target = e.target.closest && e.target.closest('.btn, .sb-btn, .sort-btn, .tab, .bc-state, .bc-skip-btn, .deck-pile, .shop-item, .deck-item, .jtile, .ctile');
   if (!target || target.id === 'btn-play' || target.id === 'btn-discard') return;
   audio.sfx('button');
 });

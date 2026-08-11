@@ -1,4 +1,4 @@
-// Rendering and touch interaction.
+// Rendering and touch interaction for the landscape table layout.
 
 import { SUITS, rankLabel, cardName, shortCardName, ENHANCEMENTS, EDITIONS, SEALS, cardChips } from './cards.js';
 import { HAND_ORDER, HAND_NAMES } from './poker.js';
@@ -18,13 +18,28 @@ function h(tag, className, html) {
   return node;
 }
 
+// Traditional pip positions, as percentages inside the card's pip box.
+// Anything below the halfway line is drawn upside down, like a real card.
+const PIP_LAYOUT = {
+  2: [[50, 6], [50, 94]],
+  3: [[50, 6], [50, 50], [50, 94]],
+  4: [[20, 6], [80, 6], [20, 94], [80, 94]],
+  5: [[20, 6], [80, 6], [50, 50], [20, 94], [80, 94]],
+  6: [[20, 6], [80, 6], [20, 50], [80, 50], [20, 94], [80, 94]],
+  7: [[20, 6], [80, 6], [50, 28], [20, 50], [80, 50], [20, 94], [80, 94]],
+  8: [[20, 6], [80, 6], [50, 28], [20, 50], [80, 50], [50, 72], [20, 94], [80, 94]],
+  9: [[20, 6], [80, 6], [20, 35], [80, 35], [50, 50], [20, 65], [80, 65], [20, 94], [80, 94]],
+  10: [[20, 6], [80, 6], [20, 35], [80, 35], [50, 20], [50, 80], [20, 65], [80, 65], [20, 94], [80, 94]],
+};
+
 export class UI {
   constructor(engine, app) {
     this.e = engine;
     this.app = app;
-    this.selected = new Set();      // uids of selected hand cards
+    this.selected = new Set();
     this.animating = false;
     this.longPressTimer = null;
+    this.runInfoTab = 'hands';
 
     this.bindStaticControls();
     engine.on('state', () => { if (!this.animating) this.render(); });
@@ -46,22 +61,22 @@ export class UI {
     });
     engine.on('hand_leveled', ({ key, level, amount, source }) => {
       if (amount > 0) audio.sfx('levelup');
-      if (amount > 0) this.toast(`${source}: ${HAND_NAMES[key]} → lvl ${level}`, 'good');
-      else this.toast(`${source}: ${HAND_NAMES[key]} → lvl ${level}`, 'warn');
+      this.toast(`${source}: ${HAND_NAMES[key]} → lvl ${level}`, amount > 0 ? 'good' : 'warn');
     });
+
+    window.addEventListener('resize', () => { if (!this.animating) this.render(); });
   }
 
-  // ── static controls ─────────────────────────────────────────────────
   bindStaticControls() {
     $('btn-play').addEventListener('click', () => this.onPlay());
     $('btn-discard').addEventListener('click', () => this.onDiscard());
     $('btn-sort-rank').addEventListener('click', () => this.setSort('rank'));
     $('btn-sort-suit').addEventListener('click', () => this.setSort('suit'));
-    $('hud-menu').addEventListener('click', () => this.showRunMenu());
-    $('hud-deck').addEventListener('click', () => this.showDeckView());
+    $('btn-runinfo').addEventListener('click', () => this.showRunInfo());
+    $('btn-options').addEventListener('click', () => this.showOptionsMenu());
+    $('deck-pile').addEventListener('click', () => this.showDeckView());
   }
 
-  // Defer a UI action until any running animation has finished.
   later(fn) {
     if (!this.animating) fn();
     else this.deferred = fn;
@@ -98,81 +113,86 @@ export class UI {
     if (!e.seed) return;
     const playing = e.gameState === 'playing';
 
-    $('hud-ante').innerHTML = `${e.ante}<span class="hud-sub">/${BASE_CONFIG.winAnte}</span>`;
-    $('hud-round').textContent = e.round + 1;
-    $('hud-money').textContent = `$${e.money}`;
-
-    // While a blind is in progress the stage collapses so the felt gets the
-    // leftover vertical space instead of leaving a hole in the middle.
     $('screen-run').classList.toggle('playing', playing);
-    $('blind-banner').classList.toggle('hidden', !playing);
-    $('score-bar').classList.toggle('hidden', !playing);
-    $('calc-row').classList.toggle('hidden', !playing);
     $('play-area').classList.toggle('hidden', !playing);
-    $('hand-dock').classList.toggle('hidden', !playing);
+    $('hand-zone').classList.toggle('hidden', !playing);
+    $('action-row').classList.toggle('hidden', !playing);
 
-    if (playing) this.renderPlaying();
-    this.renderJokers();
-    this.renderConsumables();
+    this.renderSidebar();
+    this.renderTrays();
     this.renderStage();
+    if (playing) {
+      this.renderHand();
+      this.updateActionButtons();
+      if (!this.animating) this.previewHand();
+    }
     this.syncMood();
   }
 
-  // Keep the backing track matching whatever screen the player is on.
-  syncMood() {
+  // ── sidebar ─────────────────────────────────────────────────────────
+  renderSidebar() {
     const e = this.e;
-    if (e.gameState === 'shop' || e.gameState === 'pack') audio.setMood('shop');
-    else if (e.gameState === 'playing') audio.setMood(e.blind.type === 'boss' && !e.blind.disabled ? 'boss' : 'play');
-    else if (e.gameState === 'blind_select' || e.gameState === 'round_won') audio.setMood('play');
+    const choosing = e.gameState === 'blind_select';
+
+    $('sb-choose').classList.toggle('hidden', !choosing);
+    $('sb-blind-panel').classList.toggle('hidden', choosing);
+
+    if (!choosing && e.blind) {
+      const info = e.blindInfo(e.blind.type);
+      const panel = $('sb-blind-panel');
+      panel.classList.toggle('big', e.blind.type === 'big');
+      panel.classList.toggle('boss', e.blind.type === 'boss');
+      $('sb-blind-title').textContent = info.name;
+      $('sb-blind-req').textContent = fmt(e.blind.chips);
+      $('sb-blind-reward').textContent = '$'.repeat(info.reward);
+      $('sb-blind-desc').textContent = e.blind.type === 'boss'
+        ? (e.blind.disabled ? 'Effect disabled' : info.desc)
+        : '';
+      const chip = $('sb-blind-chip');
+      chip.className = `blind-chip ${e.blind.type === 'big' ? 'big' : ''} ${e.blind.type === 'boss' ? 'boss' : ''}`;
+      chip.innerHTML = e.blind.type === 'boss' ? info.emoji : (e.blind.type === 'big' ? 'BIG<br>BLIND' : 'SMALL<br>BLIND');
+    }
+
+    $('sb-score').textContent = fmt(e.score || 0);
+    $('ct-hands').textContent = e.handsLeft != null && e.gameState === 'playing' ? e.handsLeft : e.maxHands;
+    $('ct-discards').textContent = e.discardsLeft != null && e.gameState === 'playing' ? e.discardsLeft : e.maxDiscards;
+    $('ct-money').textContent = `$${e.money}`;
+    $('ct-ante').textContent = e.ante;
+    $('ct-round').textContent = choosing ? e.round : e.round + 1;
+    // Outside a blind the deck has not been dealt from yet.
+    const remaining = e.gameState === 'playing' ? e.drawPile.length : e.fullDeck.length;
+    $('ct-deck').textContent = `${remaining}/${e.fullDeck.length}`;
   }
 
-  renderPlaying() {
-    const e = this.e;
-    const info = e.blindInfo(e.blind.type);
-    const banner = $('blind-banner');
-    banner.classList.toggle('boss', e.blind.type === 'boss');
-    $('bb-icon').textContent = info.emoji;
-    $('bb-name').textContent = info.name + (e.blind.disabled ? ' (disabled)' : '');
-    $('bb-desc').textContent = e.blind.type === 'boss' ? info.desc : `Reward $${info.reward}`;
-    $('bb-req').textContent = fmt(e.blind.chips);
-
-    $('sb-score').textContent = fmt(e.score);
-    $('sb-fill').style.width = `${Math.min(100, (e.score / e.blind.chips) * 100)}%`;
-
-    if (!this.animating) this.previewHand();
-
-    $('ct-hands').textContent = e.handsLeft;
-    $('ct-discards').textContent = e.discardsLeft;
-    $('ct-deck').textContent = `${e.drawPile.length}/${e.fullDeck.length}`;
-
-    this.updateActionButtons();
-    this.renderHand();
-  }
-
-  // Dim rather than disable, so tapping still explains why it is not allowed.
-  updateActionButtons() {
-    const e = this.e;
-    if (e.gameState !== 'playing') return;
-    const selected = this.selectedCards();
-    $('btn-play').classList.toggle('dim', !e.canPlay(selected).ok);
-    $('btn-discard').classList.toggle('dim', !e.canDiscard(selected).ok);
-  }
-
+  // The hand readout: what you are about to play and what it is worth.
   previewHand() {
     const e = this.e;
     const selected = e.hand.filter((c) => this.selected.has(c.uid));
+    const nameEl = $('sb-hand-name');
+    const levelEl = $('sb-hand-level');
     if (!selected.length) {
-      $('calc-chips').textContent = '0';
-      $('calc-mult').textContent = '0';
-      $('calc-hand').textContent = '';
+      nameEl.textContent = '';
+      levelEl.classList.add('hidden');
+      $('sb-chips').textContent = '0';
+      $('sb-mult').textContent = '0';
       return;
     }
     const ev = e.evaluate(selected);
     const level = e.handLevels[ev.key] || 1;
     const v = handValues(ev.key, level);
-    $('calc-chips').textContent = fmt(v.chips);
-    $('calc-mult').textContent = fmt(v.mult);
-    $('calc-hand').textContent = `${ev.name}  lvl ${level}`;
+    nameEl.textContent = ev.name;
+    levelEl.textContent = `lvl.${level}`;
+    levelEl.classList.remove('hidden');
+    $('sb-chips').textContent = fmt(v.chips);
+    $('sb-mult').textContent = fmt(v.mult);
+  }
+
+  updateActionButtons() {
+    const e = this.e;
+    if (e.gameState !== 'playing') return;
+    const selected = this.selectedCards();
+    $('btn-play').classList.toggle('ready', e.canPlay(selected).ok);
+    $('btn-discard').classList.toggle('ready', e.canDiscard(selected).ok);
   }
 
   // ── hand ────────────────────────────────────────────────────────────
@@ -180,20 +200,46 @@ export class UI {
     const row = $('hand-row');
     row.innerHTML = '';
     const e = this.e;
-    const count = e.hand.length;
-    // Squeeze cards together when the hand grows past what fits.
-    const overlap = count > 8 ? Math.min(18, (count - 8) * 4 + 2) : 0;
-    e.hand.forEach((card, i) => {
+    const cards = e.hand;
+    $('ct-handsize').textContent = `${cards.length}/${e.handSize}`;
+
+    cards.forEach((card) => {
       const node = this.cardEl(card);
-      if (i > 0 && overlap) node.style.marginLeft = `-${overlap}px`;
       if (this.selected.has(card.uid)) node.classList.add('selected');
-      if (e.bossActive('bell') && e.forcedCard === card) node.style.boxShadow = '0 2px 0 rgba(0,0,0,.4), 0 0 0 2px #9b5de5';
+      if (e.bossActive('bell') && e.forcedCard === card) node.dataset.forced = '1';
       this.attachCardHandlers(node, card);
       row.appendChild(node);
+    });
+
+    this.layoutHand();
+  }
+
+  // Fan the hand into Balatro's shallow arc, squeezing it if it overflows.
+  layoutHand() {
+    const row = $('hand-row');
+    const nodes = [...row.children];
+    const n = nodes.length;
+    if (!n) return;
+
+    const cardW = nodes[0].offsetWidth || 46;
+    const gap = 3;
+    const available = row.clientWidth - 6;
+    const natural = n * cardW + (n - 1) * gap;
+    const squeeze = natural > available && n > 1 ? (natural - available) / (n - 1) : 0;
+
+    nodes.forEach((node, i) => {
+      const t = n > 1 ? (i - (n - 1) / 2) / ((n - 1) / 2) : 0;
+      const angle = t * 6.5;
+      const dip = t * t * cardW * 0.22;
+      const lift = node.classList.contains('selected') ? -cardW * 0.34 : 0;
+      node.style.marginLeft = i === 0 ? '0' : `${gap - squeeze}px`;
+      node.style.transform = `translateY(${dip + lift}px) rotate(${angle}deg)`;
+      node.style.zIndex = String(i + 1);
     });
   }
 
   cardEl(card) {
+    const suit = SUITS[card.suit];
     const red = card.suit === 'H' || card.suit === 'D';
     const node = h('div', 'pcard');
     node.dataset.uid = card.uid;
@@ -202,10 +248,24 @@ export class UI {
     if (card.edition) node.classList.add(`ed-${card.edition}`);
     if (card.debuffed && !card.faceDown) node.classList.add('debuffed');
     if (card.faceDown) node.classList.add('facedown');
+
+    const corner = (cls) =>
+      `<span class="pc-corner ${cls}"><span class="pc-rank">${rankLabel(card.rank)}</span><span class="pc-suit">${suit.symbol}</span></span>`;
+
+    let middle;
+    if (card.rank === 14) {
+      middle = `<span class="pc-center">${suit.symbol}</span>`;
+    } else if (card.rank >= 11) {
+      middle = `<span class="pc-face">${rankLabel(card.rank)}</span>`;
+    } else {
+      const pips = (PIP_LAYOUT[card.rank] || [])
+        .map(([x, y]) => `<span class="pc-pip${y > 50 ? ' flip' : ''}" style="left:${x}%;top:${y}%">${suit.symbol}</span>`)
+        .join('');
+      middle = `<span class="pc-pips">${pips}</span>`;
+    }
+
     node.innerHTML =
-      `<span class="pc-rank">${rankLabel(card.rank)}</span>` +
-      `<span class="pc-suit-sm">${SUITS[card.suit].symbol}</span>` +
-      `<span class="pc-suit-big">${SUITS[card.suit].symbol}</span>` +
+      corner('') + corner('pc-corner-b') + middle +
       (card.edition ? '<span class="pc-edition"></span>' : '') +
       (card.seal ? `<span class="pc-seal seal-${card.seal}"></span>` : '');
     return node;
@@ -223,12 +283,7 @@ export class UI {
     node.addEventListener('touchend', () => { if (this.longPressTimer) { cancel(); this.toggleCard(card); } });
     node.addEventListener('touchmove', cancel, { passive: true });
     node.addEventListener('touchcancel', cancel);
-    // Mouse fallback for desktop testing.
-    node.addEventListener('click', (ev) => {
-      if (ev.pointerType === 'touch') return;
-      if ('ontouchstart' in window) return;
-      this.toggleCard(card);
-    });
+    node.addEventListener('click', () => { if (!('ontouchstart' in window)) this.toggleCard(card); });
     node.addEventListener('contextmenu', (ev) => { ev.preventDefault(); this.showCardInfo(card); });
   }
 
@@ -240,24 +295,22 @@ export class UI {
       this.selected.add(card.uid);
       audio.sfx('select');
     }
-    // Toggle in place rather than re-rendering, so the raise animation plays.
     const node = $('hand-row').querySelector(`[data-uid="${card.uid}"]`);
     if (node) node.classList.toggle('selected', this.selected.has(card.uid));
-    else this.renderHand();
+    this.layoutHand();
     this.previewHand();
     this.updateActionButtons();
   }
 
   selectedCards() { return this.e.hand.filter((c) => this.selected.has(c.uid)); }
 
-  // ── jokers & consumables ────────────────────────────────────────────
-  renderJokers() {
+  // ── trays ───────────────────────────────────────────────────────────
+  renderTrays() {
     const e = this.e;
-    const row = $('jokers-row');
-    row.innerHTML = '';
+    const jokers = $('jokers-row');
+    jokers.innerHTML = '';
     $('jokers-count').textContent = `${e.jokers.length}/${e.jokerSlots}`;
-    $('jokers-strip').classList.toggle('empty', !e.jokers.length);
-    if (!e.jokers.length) { row.appendChild(h('div', 'strip-empty', 'No Jokers yet — buy some in the shop')); return; }
+    if (!e.jokers.length) jokers.appendChild(h('div', 'tray-empty', 'Jokers'));
     for (const joker of e.jokers) {
       const def = JOKERS[joker.key] || {};
       const node = h('div', `jtile rarity-${def.rarity || 'common'}`);
@@ -270,28 +323,24 @@ export class UI {
         `<span class="jt-name">${def.name || joker.key}</span>` +
         (joker.edition === 'negative' ? '<span class="neg-badge">NEG</span>' : '');
       node.addEventListener('click', () => this.showJokerInfo(joker));
-      row.appendChild(node);
+      jokers.appendChild(node);
     }
-  }
 
-  renderConsumables() {
-    const e = this.e;
-    const row = $('consumables-row');
-    row.innerHTML = '';
+    const cons = $('consumables-row');
+    cons.innerHTML = '';
     $('cons-count').textContent = `${e.consumables.length}/${e.consumableSlots}`;
-    $('consumables-strip').classList.toggle('empty', !e.consumables.length);
-    if (!e.consumables.length) { row.appendChild(h('div', 'strip-empty', 'No consumables')); return; }
+    if (!e.consumables.length) cons.appendChild(h('div', 'tray-empty', 'Consumables'));
     for (const card of e.consumables) {
       const def = CONSUMABLES[card.key] || {};
       const node = h('div', `ctile kind-${def.kind || 'tarot'}`);
       if (card.negative) node.classList.add('edition-negative');
       node.innerHTML = `<span class="jt-emoji">${def.emoji || '🎴'}</span>`;
       node.addEventListener('click', () => this.showConsumableInfo(card));
-      row.appendChild(node);
+      cons.appendChild(node);
     }
   }
 
-  // ── stage ───────────────────────────────────────────────────────────
+  // ── stage: blind select / shop ──────────────────────────────────────
   renderStage() {
     const stage = $('stage');
     const e = this.e;
@@ -302,87 +351,79 @@ export class UI {
 
   renderBlindSelect(stage) {
     const e = this.e;
-    const wrap = h('div', 'blind-choices');
+    const wrap = h('div', 'blind-columns');
     const order = e.blindOrder();
     const currentIndex = e.round % 3;
 
     order.forEach((type, i) => {
-      const info = e.blindInfo(type);
-      const card = h('div', `blind-card ${type === 'boss' ? 'boss' : ''} ${i === currentIndex ? 'current' : ''} ${i < currentIndex ? 'done' : ''}`);
-      card.innerHTML =
-        `<div class="bc-top">
-           <div class="bc-emoji">${info.emoji}</div>
-           <div class="bc-title"><b>${info.name}</b><span>${info.desc}</span></div>
-           <div class="bc-reward">${'$'.repeat(info.reward)}</div>
-         </div>
-         <div class="bc-score">
-           <span class="bc-score-lbl">Score at least</span>
-           <span class="bc-score-val">${fmt(info.chips)}</span>
-         </div>`;
-      if (i === currentIndex) {
-        const actions = h('div', 'bc-actions');
-        const play = h('button', 'btn btn-blue', 'Play Blind');
-        play.addEventListener('click', () => { this.selected.clear(); e.selectBlind(); });
-        actions.appendChild(play);
-        if (info.skippable) {
-          const skip = h('button', 'btn btn-ghost', 'Skip for Tag');
-          skip.addEventListener('click', () => e.skipBlind());
-          actions.appendChild(skip);
-        }
-        if (type === 'boss' && (e.hasVoucher('directors_cut') || e.hasVoucher('retcon'))) {
-          const canReroll = e.hasVoucher('retcon') || e.bossRerollsThisAnte < 1;
-          const reroll = h('button', 'btn btn-ghost', 'Reroll $10');
-          reroll.disabled = !canReroll;
-          reroll.addEventListener('click', () => e.rerollBoss());
-          actions.appendChild(reroll);
-        }
-        card.appendChild(actions);
-      }
-      wrap.appendChild(card);
+      wrap.appendChild(this.blindColumn(type, i, currentIndex, true));
     });
     stage.appendChild(wrap);
-
-    const tips = h('div', 'panel');
-    tips.innerHTML = `<h2 class="panel-title">Run</h2>
-      <div class="deck-stats">
-        <div class="deck-stat"><b>${DECKS[e.deckKey].name.replace(' Deck', '')}</b><small>Deck</small></div>
-        <div class="deck-stat"><b>${e.maxHands}</b><small>Hands</small></div>
-        <div class="deck-stat"><b>${e.maxDiscards}</b><small>Discards</small></div>
-        <div class="deck-stat"><b>${e.handSize}</b><small>Hand size</small></div>
-      </div>`;
-    const btn = h('button', 'btn btn-ghost btn-small', 'Run Info');
-    btn.addEventListener('click', () => this.showRunInfo());
-    tips.appendChild(btn);
-    stage.appendChild(tips);
   }
 
-  // ── shop ────────────────────────────────────────────────────────────
+  blindColumn(type, index, currentIndex, interactive) {
+    const e = this.e;
+    const info = e.blindInfo(type);
+    const isCurrent = index === currentIndex;
+    const col = h('div', `blind-col type-${type} ${isCurrent ? 'current' : ''} ${index < currentIndex ? 'beaten' : ''} ${index === currentIndex + 1 ? 'next' : ''}`);
+
+    if (isCurrent && interactive) {
+      const select = h('button', 'bc-state select', 'Select');
+      select.addEventListener('click', () => { this.selected.clear(); e.selectBlind(); });
+      col.appendChild(select);
+    } else {
+      col.appendChild(h('div', 'bc-state', index < currentIndex ? 'Defeated' : 'Upcoming'));
+    }
+
+    col.appendChild(h('div', 'bc-name', info.name));
+
+    const chip = h('div', `blind-chip ${type === 'big' ? 'big' : ''} ${type === 'boss' ? 'boss' : ''}`);
+    chip.innerHTML = type === 'boss' ? info.emoji : (type === 'big' ? 'BIG<br>BLIND' : 'SMALL<br>BLIND');
+    col.appendChild(chip);
+
+    if (type === 'boss') col.appendChild(h('div', 'bc-effect', info.desc));
+
+    col.appendChild(h('div', 'bc-req', 'Score at least'));
+    col.appendChild(h('div', 'bc-req-value', `<i class="chip"></i>${fmt(info.chips)}`));
+    col.appendChild(h('div', 'bc-reward', `Reward: <b>${'$'.repeat(info.reward)}+</b>`));
+
+    if (info.skippable && interactive) {
+      col.appendChild(h('div', 'bc-or', 'or'));
+      const skipRow = h('div', 'bc-skip');
+      skipRow.appendChild(h('div', 'bc-tag', '🎟'));
+      const skip = h('button', 'bc-skip-btn', 'Skip Blind');
+      skip.disabled = !isCurrent;
+      skip.addEventListener('click', () => e.skipBlind());
+      skipRow.appendChild(skip);
+      col.appendChild(skipRow);
+    } else if (type === 'boss') {
+      const note = h('div', 'bc-ante');
+      note.innerHTML = `<b>Up the Ante</b><span>Raise all Blinds<br>Refresh Blinds</span>`;
+      col.appendChild(note);
+      if (interactive && (e.hasVoucher('directors_cut') || e.hasVoucher('retcon'))) {
+        const canReroll = e.hasVoucher('retcon') || e.bossRerollsThisAnte < 1;
+        const reroll = h('button', 'bc-skip-btn', 'Reroll $10');
+        reroll.disabled = !canReroll;
+        reroll.addEventListener('click', () => e.rerollBoss());
+        col.appendChild(reroll);
+      }
+    }
+    return col;
+  }
+
   renderShop(stage) {
     const e = this.e;
     const shop = e.shop;
     if (!shop) return;
-
-    const head = h('div', 'shop-head', '<h2>Shop</h2>');
-    stage.appendChild(head);
+    const wrap = h('div', 'shop-wrap');
+    wrap.appendChild(h('div', 'shop-head', '<h2>Shop</h2>'));
 
     const grid = h('div', 'shop-grid');
     for (const item of shop.items) grid.appendChild(this.shopItemEl(item));
-    if (!shop.items.length) grid.appendChild(h('div', 'strip-empty', 'Sold out — reroll for more'));
-    stage.appendChild(grid);
-
-    if (shop.voucher) {
-      stage.appendChild(h('div', 'shop-section-label', 'Voucher'));
-      const vgrid = h('div', 'shop-grid');
-      vgrid.appendChild(this.shopItemEl(shop.voucher));
-      stage.appendChild(vgrid);
-    }
-
-    if (shop.packs.length) {
-      stage.appendChild(h('div', 'shop-section-label', 'Booster Packs'));
-      const pgrid = h('div', 'shop-grid');
-      for (const pack of shop.packs) pgrid.appendChild(this.shopItemEl(pack));
-      stage.appendChild(pgrid);
-    }
+    if (shop.voucher) grid.appendChild(this.shopItemEl(shop.voucher));
+    for (const pack of shop.packs) grid.appendChild(this.shopItemEl(pack));
+    if (!grid.children.length) grid.appendChild(h('div', 'tray-empty', 'Sold out — reroll for more'));
+    wrap.appendChild(grid);
 
     const foot = h('div', 'shop-foot');
     const rerollCost = shop.freeRerolls > 0 ? 0 : shop.rerollCost;
@@ -392,7 +433,8 @@ export class UI {
     next.addEventListener('click', () => e.exitShop());
     foot.appendChild(reroll);
     foot.appendChild(next);
-    stage.appendChild(foot);
+    wrap.appendChild(foot);
+    stage.appendChild(wrap);
   }
 
   shopItemEl(item) {
@@ -404,7 +446,6 @@ export class UI {
       `<div class="si-cost ${item.cost === 0 ? 'free' : ''}">${item.cost === 0 ? 'FREE' : `$${item.cost}`}</div>` +
       (view.rarityColor ? `<span class="si-rarity" style="background:${view.rarityColor}"></span>` : '');
     if (item.kind === 'playing' && item.card) {
-      node.querySelector('.si-emoji').innerHTML = '';
       const wrap = h('div', 'mini-card-wrap');
       wrap.appendChild(this.cardEl(item.card));
       node.replaceChild(wrap, node.querySelector('.si-emoji'));
@@ -418,18 +459,13 @@ export class UI {
       const def = JOKERS[item.key];
       return { emoji: def.emoji, name: def.name, rarityColor: RARITY[def.rarity].color, def };
     }
-    if (item.kind === 'voucher') {
-      const v = VOUCHERS[item.key];
-      return { emoji: '🎟', name: v.name };
-    }
+    if (item.kind === 'voucher') return { emoji: '🎟', name: VOUCHERS[item.key].name };
     if (item.kind === 'pack') {
       const p = PACK_BY_KEY[item.packKey];
       const emoji = { tarot: '🔮', planet: '🪐', playing: '🎴', joker: '🤡', spectral: '👻' }[p.kind];
       return { emoji, name: p.name };
     }
-    if (item.kind === 'playing') {
-      return { emoji: '🎴', name: shortCardName(item.card) };
-    }
+    if (item.kind === 'playing') return { emoji: '🎴', name: shortCardName(item.card) };
     const def = CONSUMABLES[item.key];
     return { emoji: def.emoji, name: def.name };
   }
@@ -438,7 +474,7 @@ export class UI {
   openOverlay(node, opts = {}) {
     const overlay = $('overlay');
     overlay.innerHTML = '';
-    const sheet = h('div', 'sheet');
+    const sheet = h('div', `sheet ${opts.narrow ? 'narrow' : ''}`);
     sheet.appendChild(node);
     overlay.appendChild(sheet);
     overlay.classList.remove('hidden');
@@ -446,9 +482,8 @@ export class UI {
   }
 
   closeOverlay() {
-    const overlay = $('overlay');
-    overlay.classList.add('hidden');
-    overlay.innerHTML = '';
+    $('overlay').classList.add('hidden');
+    $('overlay').innerHTML = '';
   }
 
   infoSheet({ emoji, title, subtitle, subtitleColor, desc, actions = [], onClose }) {
@@ -474,8 +509,7 @@ export class UI {
   }
 
   showCardInfo(card) {
-    const parts = [];
-    parts.push(`<b>+${cardChips(card)} Chips</b> when scored`);
+    const parts = [`<b>+${cardChips(card)} Chips</b> when scored`];
     if (card.enhancement) parts.push(`<b>${ENHANCEMENTS[card.enhancement].name}</b> — ${ENHANCEMENTS[card.enhancement].desc}`);
     if (card.edition) parts.push(`<b>${EDITIONS[card.edition].name}</b> — ${EDITIONS[card.edition].desc}`);
     if (card.seal) parts.push(`<b>${SEALS[card.seal].name}</b> — ${SEALS[card.seal].desc}`);
@@ -485,20 +519,16 @@ export class UI {
       title: cardName(card),
       subtitle: 'Playing card',
       desc: parts.join('<br>'),
-    }));
+    }), { narrow: true });
   }
 
   showJokerInfo(joker) {
     const e = this.e;
     const def = JOKERS[joker.key] || {};
-    const actions = [];
     const index = e.jokers.indexOf(joker);
-    actions.push({
-      label: `Sell $${e.sellValue(joker)}`, cls: 'btn-gold',
-      onClick: () => e.sellJoker(joker),
-    });
-    if (index > 0) actions.push({ label: '◀ Move', onClick: () => { e.moveJoker(index, index - 1); } });
-    if (index < e.jokers.length - 1) actions.push({ label: 'Move ▶', onClick: () => { e.moveJoker(index, index + 1); } });
+    const actions = [{ label: `Sell $${e.sellValue(joker)}`, cls: 'btn-gold', onClick: () => e.sellJoker(joker) }];
+    if (index > 0) actions.push({ label: '◀', onClick: () => e.moveJoker(index, index - 1) });
+    if (index < e.jokers.length - 1) actions.push({ label: '▶', onClick: () => e.moveJoker(index, index + 1) });
     this.openOverlay(this.infoSheet({
       emoji: def.emoji || '🃏',
       title: def.name || joker.key,
@@ -506,7 +536,7 @@ export class UI {
       subtitleColor: RARITY[def.rarity] ? RARITY[def.rarity].color : null,
       desc: jokerDesc(joker, e) + (joker.edition ? `<br><span class="muted">${EDITIONS[joker.edition].desc}</span>` : ''),
       actions,
-    }));
+    }), { narrow: true });
   }
 
   showConsumableInfo(card) {
@@ -517,24 +547,28 @@ export class UI {
     const [min, max] = e.consumableRequirement(card);
     const hint = min > 0 ? `<br><span class="muted">Select ${min === max ? min : `${min}–${max}`} card(s) in your hand first.</span>` : '';
     const usableNow = e.gameState === 'playing' || min === 0;
+    const sellFor = Math.max(1, Math.floor((def.cost || 3) / 2));
     this.openOverlay(this.infoSheet({
       emoji: def.emoji || '🎴',
       title: def.name || card.key,
-      subtitle: def.kind ? def.kind.toUpperCase() : '',
+      subtitle: (def.kind || '').toUpperCase(),
       desc: consumableDesc(card, e) + hint + (check.ok ? '' : `<br><span style="color:var(--gold)">${check.reason}</span>`),
       actions: [
         {
           label: 'Use', cls: 'btn-green', disabled: !check.ok || !usableNow,
           onClick: () => { if (e.useConsumable(card, selected)) { this.selected.clear(); this.render(); } },
         },
-        { label: `Sell $${Math.max(1, Math.floor((def.cost || 3) / 2))}`, cls: 'btn-gold', onClick: () => {
-          const i = e.consumables.indexOf(card);
-          if (i >= 0) e.consumables.splice(i, 1);
-          e.addMoney(Math.max(1, Math.floor((def.cost || 3) / 2)), 'Sold');
-          e.emit('state');
-        } },
+        {
+          label: `Sell $${sellFor}`, cls: 'btn-gold',
+          onClick: () => {
+            const i = e.consumables.indexOf(card);
+            if (i >= 0) e.consumables.splice(i, 1);
+            e.addMoney(sellFor, 'Sold');
+            e.emit('state');
+          },
+        },
       ],
-    }));
+    }), { narrow: true });
   }
 
   showShopItemInfo(item) {
@@ -551,7 +585,8 @@ export class UI {
       subtitle = 'Voucher — permanent';
     } else if (item.kind === 'pack') {
       const p = PACK_BY_KEY[item.packKey];
-      desc = `Choose <b>${p.choose}</b> of <b>${p.size}</b> ${{ tarot: 'Tarot', planet: 'Planet', playing: 'playing', joker: 'Joker', spectral: 'Spectral' }[p.kind]} cards.`;
+      const kindName = { tarot: 'Tarot', planet: 'Planet', playing: 'playing', joker: 'Joker', spectral: 'Spectral' }[p.kind];
+      desc = `Choose <b>${p.choose}</b> of <b>${p.size}</b> ${kindName} cards.`;
       subtitle = 'Booster Pack';
     } else if (item.kind === 'playing') {
       desc = `Adds this card permanently to your deck.<br><b>+${cardChips(item.card)} Chips</b> when scored`;
@@ -578,7 +613,7 @@ export class UI {
           else if (e.buyShopItem(item)) audio.sfx('buy');
         },
       }],
-    }));
+    }), { narrow: true });
   }
 
   // ── pack opening ────────────────────────────────────────────────────
@@ -603,9 +638,7 @@ export class UI {
         wrap.appendChild(this.cardEl(option.card));
         item.replaceChild(wrap, item.querySelector('.si-emoji'));
       }
-      item.addEventListener('click', () => {
-        this.showPackOptionInfo(option);
-      });
+      item.addEventListener('click', () => this.showPackOptionInfo(option));
       grid.appendChild(item);
     }
     node.appendChild(grid);
@@ -641,28 +674,26 @@ export class UI {
       emoji, title, subtitle, desc,
       actions: [{
         label: 'Take', cls: 'btn-green',
-        onClick: () => { const taken = e.takePackOption(option); if (e.pack) this.showPack(); else if (!taken) this.showPack(); },
+        onClick: () => { e.takePackOption(option); if (e.pack) this.showPack(); },
       }],
       onClose: () => { if (e.pack) this.showPack(); },
-    }), { sticky: true });
+    }), { sticky: true, narrow: true });
   }
 
-  // ── cash out / end states ───────────────────────────────────────────
+  // ── end of round ────────────────────────────────────────────────────
   showCashOut(summary) {
     const e = this.e;
     const node = h('div', 'cashout');
     node.appendChild(h('h2', null, 'Blind Defeated'));
     node.appendChild(h('div', 'cashout-total', `$${summary.payout}`));
     const list = h('div');
-    for (const line of summary.details) {
-      list.appendChild(h('div', 'cash-line', `<span>${line.label}</span><b>+$${line.amount}</b>`));
-    }
+    for (const line of summary.details) list.appendChild(h('div', 'cash-line', `<span>${line.label}</span><b>+$${line.amount}</b>`));
     list.appendChild(h('div', 'cash-line', `<span>Score</span><b>${fmt(summary.score)} / ${fmt(summary.required)}</b>`));
     node.appendChild(list);
     const btn = h('button', 'btn btn-green btn-big', 'Cash Out');
     btn.addEventListener('click', () => { this.closeOverlay(); this.selected.clear(); e.proceedAfterRound(); });
     node.appendChild(btn);
-    this.openOverlay(node, { sticky: true });
+    this.openOverlay(node, { sticky: true, narrow: true });
   }
 
   showGameOver(info) {
@@ -679,7 +710,7 @@ export class UI {
     const again = h('button', 'btn btn-red btn-big', 'Main Menu');
     again.addEventListener('click', () => { this.closeOverlay(); this.app.endRun(); });
     node.appendChild(again);
-    this.openOverlay(node, { sticky: true });
+    this.openOverlay(node, { sticky: true, narrow: true });
   }
 
   showVictory() {
@@ -698,24 +729,53 @@ export class UI {
     done.addEventListener('click', () => { this.closeOverlay(); this.app.endRun(); });
     node.appendChild(endless);
     node.appendChild(done);
-    this.openOverlay(node, { sticky: true });
+    this.openOverlay(node, { sticky: true, narrow: true });
   }
 
-  // ── info panels ─────────────────────────────────────────────────────
-  // Music, sound effects and volume. Shared by the title and run menus.
+  // ── options menu ────────────────────────────────────────────────────
+  showOptionsMenu() {
+    const node = h('div', 'menu-stack');
+    const add = (label, cls, fn) => {
+      const b = h('button', `btn ${cls}`, label);
+      b.addEventListener('click', fn);
+      node.appendChild(b);
+    };
+    add('Settings', 'btn-red', () => this.showAudioSettings(() => this.showOptionsMenu()));
+    add('New Run', 'btn-red', () => this.confirmNewRun());
+    add('Main Menu', 'btn-red', () => this.app.saveAndQuit());
+    add('Stats', 'btn-red', () => this.showStats());
+    add('Collection', 'btn-red', () => this.app.showCollection());
+    add('Customize Deck', 'btn-red', () => this.showDeckView());
+    add('Back', 'btn-gold', () => this.closeOverlay());
+    this.openOverlay(node, { narrow: true });
+  }
+
+  confirmNewRun() {
+    const node = h('div');
+    node.appendChild(h('h2', null, 'Start a new run?'));
+    node.appendChild(h('p', null, 'This abandons the current run. It cannot be undone.'));
+    const yes = h('button', 'btn btn-red', 'Abandon and start over');
+    yes.addEventListener('click', () => { this.closeOverlay(); this.app.endRun(); });
+    const no = h('button', 'btn btn-ghost', 'Keep playing');
+    no.addEventListener('click', () => this.showOptionsMenu());
+    node.appendChild(yes);
+    node.appendChild(no);
+    this.openOverlay(node, { narrow: true });
+  }
+
   showAudioSettings(onBack) {
     const node = h('div');
-    node.appendChild(h('h2', null, 'Sound'));
-    node.appendChild(h('p', null, 'The soundtrack and every effect are generated live in the browser — nothing is downloaded.'));
+    node.appendChild(h('h2', null, 'Settings'));
+    node.appendChild(h('p', null, 'Music and effects are generated live in the browser — nothing is downloaded.'));
 
     const toggleRow = (label, key) => {
       const row = h('div', 'opt-row');
       row.appendChild(h('span', null, label));
-      const btn = h('button', `btn btn-tiny ${audio.settings[key] ? 'active' : ''}`, audio.settings[key] ? 'ON' : 'OFF');
+      const btn = h('button', `btn btn-tiny ${audio.settings[key] ? 'btn-gold' : 'btn-ghost'}`, audio.settings[key] ? 'ON' : 'OFF');
       btn.addEventListener('click', () => {
         audio.unlock();
         audio.set(key, !audio.settings[key]);
-        btn.classList.toggle('active', audio.settings[key]);
+        btn.className = `btn btn-tiny ${audio.settings[key] ? 'btn-gold' : 'btn-ghost'}`;
         btn.textContent = audio.settings[key] ? 'ON' : 'OFF';
         if (key === 'sfx' && audio.settings.sfx) audio.sfx('select');
       });
@@ -739,110 +799,88 @@ export class UI {
 
     node.appendChild(h('p', null, '<span class="muted">On iPhone the ring/silent switch mutes web audio — flip it to ring if you hear nothing.</span>'));
 
-    const back = h('button', 'btn btn-ghost', onBack ? 'Back' : 'Close');
+    const back = h('button', 'btn btn-gold', onBack ? 'Back' : 'Close');
     back.addEventListener('click', () => { this.closeOverlay(); if (onBack) onBack(); });
+    node.appendChild(back);
+    this.openOverlay(node, { narrow: true });
+  }
+
+  // ── run info (tabbed) ───────────────────────────────────────────────
+  showRunInfo(tab) {
+    if (tab) this.runInfoTab = tab;
+    const node = h('div');
+    const tabs = h('div', 'tabs');
+    for (const [key, label] of [['hands', 'Poker Hands'], ['blinds', 'Blinds'], ['vouchers', 'Vouchers']]) {
+      const btn = h('button', `tab ${this.runInfoTab === key ? 'active' : ''}`, label);
+      btn.addEventListener('click', () => this.showRunInfo(key));
+      tabs.appendChild(btn);
+    }
+    node.appendChild(tabs);
+
+    const body = h('div', 'tab-body');
+    if (this.runInfoTab === 'hands') this.buildHandsTab(body);
+    else if (this.runInfoTab === 'blinds') this.buildBlindsTab(body);
+    else this.buildVouchersTab(body);
+    node.appendChild(body);
+
+    const back = h('button', 'btn btn-gold', 'Back');
+    back.addEventListener('click', () => this.closeOverlay());
     node.appendChild(back);
     this.openOverlay(node);
   }
 
-  showRunMenu() {
-    const node = h('div');
-    node.appendChild(h('h2', null, 'Menu'));
-    const add = (label, cls, fn) => {
-      const b = h('button', `btn ${cls}`, label);
-      b.addEventListener('click', fn);
-      node.appendChild(b);
-    };
-    add('Run Info', 'btn-blue', () => this.showRunInfo());
-    add('Poker Hands', 'btn-blue', () => this.showHandLevels());
-    add('View Deck', 'btn-blue', () => this.showDeckView());
-    add('Sound', 'btn-blue', () => this.showAudioSettings(() => this.showRunMenu()));
-    add('Save & Quit to Menu', 'btn-gold', () => { this.closeOverlay(); this.app.saveAndQuit(); });
-    add('Abandon Run', 'btn-red', () => { this.closeOverlay(); this.app.endRun(); });
-    add('Close', 'btn-ghost', () => this.closeOverlay());
-    this.openOverlay(node);
-  }
-
-  showHandLevels() {
+  buildHandsTab(body) {
     const e = this.e;
-    const node = h('div');
-    node.appendChild(h('h2', null, 'Poker Hands'));
-    const table = h('table', 'hand-table');
+    const rows = h('div', 'hand-rows');
+    // Best hands first. Secret hands stay hidden until they are discovered.
+    let hidden = 0;
     for (const key of HAND_ORDER) {
-      if (!e.discovered.has(key)) continue;
+      if (!e.discovered.has(key)) { hidden += 1; continue; }
       const level = e.handLevels[key] || 1;
       const v = handValues(key, level);
-      const row = h('tr');
-      row.innerHTML =
-        `<td class="ht-lvl">${level}</td>` +
-        `<td>${HAND_NAMES[key]}</td>` +
-        `<td class="ht-chips">${v.chips}</td>` +
-        `<td class="ht-mult">×${v.mult}</td>` +
-        `<td class="ht-plays">${e.handPlays[key] || 0}</td>`;
-      table.appendChild(row);
+      const line = h('div', 'hand-line');
+      line.innerHTML =
+        `<span class="hl-lvl">lvl.${level}</span>` +
+        `<span class="hl-name">${HAND_NAMES[key]}</span>` +
+        `<span class="hl-vals"><span class="hl-chips">${v.chips}</span><span class="hl-x">X</span><span class="hl-mult">${v.mult}</span></span>` +
+        `<span class="hl-plays">#${e.handPlays[key] || 0}</span>`;
+      rows.appendChild(line);
     }
-    node.appendChild(table);
-    const hidden = HAND_ORDER.filter((k) => !e.discovered.has(k));
-    if (hidden.length) node.appendChild(h('p', null, `${hidden.length} secret hand${hidden.length > 1 ? 's' : ''} still undiscovered.`));
-    const close = h('button', 'btn btn-ghost', 'Close');
-    close.addEventListener('click', () => this.closeOverlay());
-    node.appendChild(close);
-    this.openOverlay(node);
+    body.appendChild(rows);
+    if (hidden) body.appendChild(h('p', null, `${hidden} secret hand${hidden > 1 ? 's' : ''} still undiscovered.`));
   }
 
-  showDeckView() {
+  buildBlindsTab(body) {
     const e = this.e;
-    const node = h('div');
-    node.appendChild(h('h2', null, `${DECKS[e.deckKey].name} — ${e.fullDeck.length} cards`));
-    const stats = h('div', 'deck-stats');
-    const suits = { S: 0, H: 0, D: 0, C: 0 };
-    let faces = 0; let aces = 0; let enhanced = 0;
-    for (const c of e.fullDeck) {
-      if (c.enhancement !== 'stone') suits[c.suit] += 1;
-      if (c.rank >= 11 && c.rank <= 13) faces += 1;
-      if (c.rank === 14) aces += 1;
-      if (c.enhancement) enhanced += 1;
-    }
-    stats.innerHTML =
-      `<div class="deck-stat"><b>${faces}</b><small>Faces</small></div>` +
-      `<div class="deck-stat"><b>${aces}</b><small>Aces</small></div>` +
-      `<div class="deck-stat"><b>${enhanced}</b><small>Enhanced</small></div>` +
-      `<div class="deck-stat"><b>${e.drawPile.length}</b><small>In deck</small></div>`;
-    node.appendChild(stats);
-    node.appendChild(h('div', 'shop-section-label',
-      `♠ ${suits.S} &nbsp; ♥ ${suits.H} &nbsp; ♦ ${suits.D} &nbsp; ♣ ${suits.C}`));
-
-    const grid = h('div', 'deck-grid sheet-scroll');
-    const sorted = e.fullDeck.slice().sort((a, b) => 'SHDC'.indexOf(a.suit) - 'SHDC'.indexOf(b.suit) || b.rank - a.rank);
-    for (const card of sorted) {
-      const el = this.cardEl(card);
-      el.classList.remove('debuffed');
-      el.addEventListener('click', () => this.showCardInfo(card));
-      grid.appendChild(el);
-    }
-    node.appendChild(grid);
-    const close = h('button', 'btn btn-ghost', 'Close');
-    close.addEventListener('click', () => this.closeOverlay());
-    node.appendChild(close);
-    this.openOverlay(node);
+    const wrap = h('div', 'blind-columns');
+    const currentIndex = e.gameState === 'playing' ? e.round % 3 : e.round % 3;
+    e.blindOrder().forEach((type, i) => {
+      const col = this.blindColumn(type, i, currentIndex, false);
+      const state = col.querySelector('.bc-state');
+      if (state) state.textContent = i < currentIndex ? 'Defeated' : i === currentIndex ? 'Current' : 'Upcoming';
+      wrap.appendChild(col);
+    });
+    body.appendChild(wrap);
   }
 
-  showRunInfo() {
+  buildVouchersTab(body) {
+    const e = this.e;
+    if (!e.vouchers.size) {
+      body.appendChild(h('div', 'empty-note', 'No vouchers redeemed this run'));
+      return;
+    }
+    const list = h('div', 'voucher-list');
+    for (const key of e.vouchers) {
+      list.appendChild(h('div', 'voucher-row', `<b>${VOUCHERS[key].name}</b><span>${VOUCHERS[key].desc}</span>`));
+    }
+    body.appendChild(list);
+  }
+
+  showStats() {
     const e = this.e;
     const node = h('div');
-    node.appendChild(h('h2', null, 'Run Info'));
+    node.appendChild(h('h2', null, 'Stats'));
     node.appendChild(h('div', 'shop-section-label', `Seed ${e.seed} · ${DECKS[e.deckKey].name}`));
-
-    node.appendChild(h('h3', null, 'Vouchers'));
-    if (e.vouchers.size) {
-      const list = h('div', 'voucher-list');
-      for (const key of e.vouchers) {
-        list.appendChild(h('div', 'voucher-row', `<b>${VOUCHERS[key].name}</b><span>${VOUCHERS[key].desc}</span>`));
-      }
-      node.appendChild(list);
-    } else node.appendChild(h('p', null, 'None redeemed yet.'));
-
-    node.appendChild(h('h3', null, 'Stats'));
     const stats = h('div');
     const rows = [
       ['Best hand', fmt(e.stats.bestHand)],
@@ -856,10 +894,44 @@ export class UI {
     ];
     for (const [label, value] of rows) stats.appendChild(h('div', 'cash-line', `<span>${label}</span><b>${value}</b>`));
     node.appendChild(stats);
+    const back = h('button', 'btn btn-gold', 'Back');
+    back.addEventListener('click', () => this.showOptionsMenu());
+    node.appendChild(back);
+    this.openOverlay(node, { narrow: true });
+  }
 
-    const close = h('button', 'btn btn-ghost', 'Close');
-    close.addEventListener('click', () => this.closeOverlay());
-    node.appendChild(close);
+  showDeckView() {
+    const e = this.e;
+    const node = h('div');
+    node.appendChild(h('h2', null, `${DECKS[e.deckKey].name} — ${e.fullDeck.length} cards`));
+    const suits = { S: 0, H: 0, D: 0, C: 0 };
+    let faces = 0; let aces = 0; let enhanced = 0;
+    for (const c of e.fullDeck) {
+      if (c.enhancement !== 'stone') suits[c.suit] += 1;
+      if (c.rank >= 11 && c.rank <= 13) faces += 1;
+      if (c.rank === 14) aces += 1;
+      if (c.enhancement) enhanced += 1;
+    }
+    const stats = h('div', 'deck-stats');
+    stats.innerHTML =
+      `<div class="deck-stat"><b>${faces}</b><small>Faces</small></div>` +
+      `<div class="deck-stat"><b>${aces}</b><small>Aces</small></div>` +
+      `<div class="deck-stat"><b>${enhanced}</b><small>Enhanced</small></div>` +
+      `<div class="deck-stat"><b>♠ ${suits.S} ♥ ${suits.H}</b><small>♦ ${suits.D} ♣ ${suits.C}</small></div>`;
+    node.appendChild(stats);
+
+    const grid = h('div', 'deck-grid sheet-scroll');
+    const sorted = e.fullDeck.slice().sort((a, b) => 'SHDC'.indexOf(a.suit) - 'SHDC'.indexOf(b.suit) || b.rank - a.rank);
+    for (const card of sorted) {
+      const el = this.cardEl(card);
+      el.classList.remove('debuffed');
+      el.addEventListener('click', () => this.showCardInfo(card));
+      grid.appendChild(el);
+    }
+    node.appendChild(grid);
+    const back = h('button', 'btn btn-gold', 'Back');
+    back.addEventListener('click', () => this.closeOverlay());
+    node.appendChild(back);
     this.openOverlay(node);
   }
 
@@ -882,7 +954,7 @@ export class UI {
 
     this.renderHand();
     this.showPlayed(played);
-    await this.animateScore(result, played);
+    await this.animateScore(result);
     this.animating = false;
     this.render();
     await wait(240);
@@ -910,20 +982,19 @@ export class UI {
     }
   }
 
-  async animateScore(result, played) {
+  async animateScore(result) {
     const steps = result.steps;
     const delay = Math.max(40, Math.min(130, Math.round(1600 / Math.max(1, steps.length))));
-    let chips = 0;
-    let mult = 0;
-    const chipsEl = $('calc-chips');
-    const multEl = $('calc-mult');
-    $('calc-hand').textContent = `${HAND_NAMES[result.handKey]}  lvl ${result.level}`;
+    const chipsEl = $('sb-chips');
+    const multEl = $('sb-mult');
+    $('sb-hand-name').textContent = HAND_NAMES[result.handKey];
+    $('sb-hand-level').textContent = `lvl.${result.level}`;
+    $('sb-hand-level').classList.remove('hidden');
 
     for (const step of steps) {
       if (step.type === 'base') {
-        chips = step.chips; mult = step.mult;
-        chipsEl.textContent = fmt(chips);
-        multEl.textContent = fmt(mult);
+        chipsEl.textContent = fmt(step.chips);
+        multEl.textContent = fmt(step.mult);
         this.bump();
         await wait(delay * 2);
       } else if (step.type === 'card_trigger') {
@@ -936,9 +1007,8 @@ export class UI {
         if (node) this.floatAt(node, 'debuffed', 'mult');
         await wait(delay);
       } else if (step.type === 'effect') {
-        chips = step.chips; mult = step.mult;
-        chipsEl.textContent = fmt(chips);
-        multEl.textContent = fmt(round2(mult));
+        chipsEl.textContent = fmt(step.chips);
+        multEl.textContent = fmt(round2(step.mult));
         this.bump();
         const anchor = step.card
           ? $('play-area').querySelector(`[data-played-uid="${step.card.uid}"]`) || this.handNode(step.card)
@@ -947,9 +1017,8 @@ export class UI {
         this.sfxForEffect(step);
         await wait(delay);
       } else if (step.type === 'balance') {
-        chips = step.chips; mult = step.mult;
-        chipsEl.textContent = fmt(chips);
-        multEl.textContent = fmt(mult);
+        chipsEl.textContent = fmt(step.chips);
+        multEl.textContent = fmt(step.mult);
         this.bump();
         await wait(delay);
       } else if (step.type === 'total') {
@@ -957,13 +1026,12 @@ export class UI {
         multEl.textContent = fmt(round2(step.mult));
         await wait(delay * 2);
         audio.sfx('levelup');
-        this.floatAt($('score-bar'), `+${fmt(step.score)}`, 'money');
+        this.floatAt($('sb-score'), `+${fmt(step.score)}`, 'money');
       }
     }
     await wait(200);
   }
 
-  // One cue per effect: the flashiest part wins so the mix stays readable.
   sfxForEffect(step) {
     const kinds = step.parts.map((p) => p.kind);
     if (kinds.includes('xmult')) audio.sfx('xmult');
@@ -973,7 +1041,8 @@ export class UI {
   }
 
   bump() {
-    const row = $('calc-row');
+    const row = document.querySelector('.sb-calc');
+    if (!row) return;
     row.classList.remove('bump');
     void row.offsetWidth;
     row.classList.add('bump');
@@ -994,8 +1063,8 @@ export class UI {
   floatAt(anchor, text, kind) {
     const fx = $('fx');
     const node = h('div', `float ${kind}`, text);
-    const rect = anchor ? anchor.getBoundingClientRect() : { left: window.innerWidth / 2 - 20, top: window.innerHeight / 2 };
-    node.style.left = `${rect.left + (anchor ? anchor.offsetWidth / 2 : 0)}px`;
+    const rect = anchor ? anchor.getBoundingClientRect() : { left: window.innerWidth / 2, top: window.innerHeight / 2, width: 0 };
+    node.style.left = `${rect.left + rect.width / 2}px`;
     node.style.top = `${rect.top - 6}px`;
     node.style.transform = 'translateX(-50%)';
     fx.appendChild(node);
@@ -1006,6 +1075,13 @@ export class UI {
     const node = h('div', `toast ${kind}`, text);
     $('toasts').appendChild(node);
     setTimeout(() => node.remove(), 1900);
+  }
+
+  syncMood() {
+    const e = this.e;
+    if (e.gameState === 'shop' || e.gameState === 'pack') audio.setMood('shop');
+    else if (e.gameState === 'playing') audio.setMood(e.blind.type === 'boss' && !e.blind.disabled ? 'boss' : 'play');
+    else if (e.gameState === 'blind_select' || e.gameState === 'round_won') audio.setMood('play');
   }
 }
 
