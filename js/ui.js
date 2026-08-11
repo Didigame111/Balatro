@@ -87,7 +87,7 @@ function styleDesc(html) {
 
 // Art for anything that can sit in a card slot.
 function artFor(item) {
-  if (item.kind === 'joker') return jokerArt(item.key);
+  if (item.kind === 'joker') return jokerArt(item.key, (JOKERS[item.key] || {}).rarity);
   if (item.kind === 'pack') return packArt(PACK_BY_KEY[item.packKey].kind);
   if (item.kind === 'voucher') return voucherArt();
   if (item.kind === 'playing') return null;
@@ -312,7 +312,12 @@ export class UI {
 
     const cardW = nodes[0].offsetWidth || 46;
     const gap = 3;
-    const available = row.clientWidth - 6;
+    // clientWidth still counts the padding that keeps the fan clear of the
+    // deck pile, so measure the content box or a big hand spills off the left
+    // edge and slides under the sidebar.
+    const pad = getComputedStyle(row);
+    const available = row.clientWidth
+      - parseFloat(pad.paddingLeft) - parseFloat(pad.paddingRight) - 6;
     const natural = n * cardW + (n - 1) * gap;
     const squeeze = natural > available && n > 1 ? (natural - available) / (n - 1) : 0;
 
@@ -406,7 +411,7 @@ export class UI {
       if (joker.edition) node.classList.add(`edition-${joker.edition}`);
       if (joker === e.disabledJoker) node.classList.add('disabled');
       if (joker.flipped) node.classList.add('flipped');
-      node.innerHTML = jokerArt(joker.key) +
+      node.innerHTML = jokerArt(joker.key, def.rarity) +
         (joker.edition === 'negative' ? '<span class="neg-badge">NEG</span>' : '');
       node.title = def.name || joker.key;
       node.addEventListener('click', () => { haptics.tap(); this.showJokerInfo(joker); });
@@ -567,9 +572,10 @@ export class UI {
     node.appendChild(h('div', `price-tag ${item.cost === 0 ? 'free' : ''}`, item.cost === 0 ? 'FREE' : `$${item.cost}`));
     node.appendChild(h('div', 'shop-name', view.name));
     if (view.rarityColor) {
+      // On the card itself, not the slot — the slot's foot is the name.
       const dot = h('span', 'si-rarity');
       dot.style.background = view.rarityColor;
-      node.appendChild(dot);
+      slot.appendChild(dot);
     }
     node.title = view.name;
     node.addEventListener('click', () => { haptics.tap(); this.showShopItemInfo(item); });
@@ -654,7 +660,7 @@ export class UI {
     if (index > 0) actions.push({ label: '◀', onClick: () => e.moveJoker(index, index - 1) });
     if (index < e.jokers.length - 1) actions.push({ label: '▶', onClick: () => e.moveJoker(index, index + 1) });
     this.openOverlay(this.infoSheet({
-      art: jokerArt(joker.key),
+      art: jokerArt(joker.key, def.rarity),
       title: def.name || joker.key,
       subtitle: joker.edition ? EDITIONS[joker.edition].name : '',
       subtitleColor: RARITY[def.rarity] ? RARITY[def.rarity].color : null,

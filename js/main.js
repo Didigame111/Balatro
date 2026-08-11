@@ -216,7 +216,7 @@ class App {
       }
     };
 
-    section('Jokers', JOKER_KEYS, JOKERS, (key) => jokerArt(key));
+    section('Jokers', JOKER_KEYS, JOKERS, (key, def) => jokerArt(key, def.rarity));
     section('Tarots', TAROT_KEYS, CONSUMABLES, (key) => consumableArt({ kind: 'tarot', key }, TAROT_KEYS.indexOf(key)));
     section('Planets', PLANET_KEYS, CONSUMABLES, (key) => consumableArt({ kind: 'planet', key }));
     section('Spectrals', SPECTRAL_KEYS, CONSUMABLES, (key) => consumableArt({ kind: 'spectral', key }));

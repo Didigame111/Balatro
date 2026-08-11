@@ -641,37 +641,23 @@ function wrap(inner, extraClass = '') {
   return `<svg class="art ${extraClass}" viewBox="${VIEW}" preserveAspectRatio="xMidYMid slice" aria-hidden="true">${inner}</svg>`;
 }
 
-// A real joker card: cream face, JOKER running up both sides, art inset in the
-// middle. Same silhouette as a playing card, so a tray of them reads as a hand.
-function jokerCard(inner) {
-  const clip = gid();
-  const side = (x, angle) =>
-    `<text x="${x}" y="70" font-size="13" fill="#2b3440" font-family="inherit"
-       text-anchor="middle" transform="rotate(${angle} ${x} 70)">JOKER</text>`;
-  return `
-    <rect width="100" height="140" rx="8" fill="#fdfdf5"/>
-    <rect x="2" y="2" width="96" height="136" rx="7" fill="none" stroke="#d5d5c6" stroke-width="2"/>
-    ${side(11, -90)}${side(89, 90)}
-    <defs><clipPath id="${clip}"><rect x="21" y="14" width="58" height="112" rx="4"/></clipPath></defs>
-    <g clip-path="url(#${clip})">
-      <rect x="21" y="14" width="58" height="112" fill="#101820"/>
-      <g transform="translate(21,14) scale(0.58,0.8)">${inner}</g>
-    </g>
-    <rect x="21" y="14" width="58" height="112" rx="4" fill="none" stroke="#2b3440" stroke-width="2"/>`;
-}
-
-export function jokerArt(key) {
+export function jokerArt(key, rarity = 'common') {
   const spec = JOKER_ART[key];
   const inner = spec && spec.motif && MOTIFS[spec.motif]
     ? MOTIFS[spec.motif](paletteFor(key, spec.palette), spec)
     : jester(key, (spec && spec.jester) || {});
-  return wrap(jokerCard(inner));
+  return banded(rarity, inner);
 }
 
 const KIND_BAND = {
   tarot: { fill: '#7b4fb5', ink: '#f2e6ff', label: 'TAROT' },
   planet: { fill: '#2f6ab5', ink: '#e2f0ff', label: 'PLANET' },
   spectral: { fill: '#2f8f92', ink: '#e0fbfa', label: 'SPECTRAL' },
+  common: { fill: '#3f78c4', ink: '#e6f1ff', label: 'JOKER' },
+  uncommon: { fill: '#2f9460', ink: '#e2fbee', label: 'JOKER' },
+  rare: { fill: '#c4453f', ink: '#ffe6e4', label: 'JOKER' },
+  legendary: { fill: '#8f56c4', ink: '#f4e6ff', label: 'JOKER' },
+  voucher: { fill: '#b8862c', ink: '#fff3d6', label: 'VOUCHER' },
 };
 
 // Every consumable wears its type on a coloured band, so a Tarot is never
@@ -681,12 +667,12 @@ function banded(kind, inner) {
   const clip = gid();
   return wrap(`
     <rect width="100" height="140" rx="8" fill="${b.fill}"/>
-    <defs><clipPath id="${clip}"><rect x="5" y="5" width="90" height="115" rx="5"/></clipPath></defs>
+    <defs><clipPath id="${clip}"><rect x="4" y="4" width="92" height="116" rx="5"/></clipPath></defs>
     <g clip-path="url(#${clip})">
-      <g transform="translate(5,5) scale(0.9,0.82)">${inner}</g>
+      <g transform="translate(4,4) scale(0.92,0.83)">${inner}</g>
     </g>
-    <rect x="5" y="5" width="90" height="115" rx="5" fill="none" stroke="${b.ink}" stroke-width="2.5"/>
-    <text x="50" y="134" font-size="13" fill="${b.ink}" font-family="inherit" text-anchor="middle">${b.label}</text>`);
+    <rect x="4" y="4" width="92" height="116" rx="5" fill="none" stroke="${b.ink}" stroke-width="2"/>
+    <text x="50" y="135" font-size="15" fill="${b.ink}" font-family="inherit" text-anchor="middle">${b.label}</text>`);
 }
 
 export function consumableArt(card, index = 0) {
@@ -718,16 +704,22 @@ export function packArt(kind) {
     <path d="M12 12 l6 10 l-6 10 l-6 -10 Z M88 116 l6 10 l-6 10 l-6 -10 Z" fill="${looks.accent}" opacity=".7"/>`);
 }
 
+/* A perforated cinema ticket. The word itself lives on the band at the foot
+   of the card like every other kind, rather than being squeezed across the
+   stub where it is unreadable at tray size. */
 export function voucherArt() {
   const g = gid();
-  return wrap(`
+  return banded('voucher', `
     <defs><linearGradient id="${g}" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2f6a9a"/><stop offset="1" stop-color="#153a5c"/>
+      <stop offset="0" stop-color="#8a5f18"/><stop offset="1" stop-color="#4a3208"/>
     </linearGradient></defs>
     <rect width="100" height="140" fill="url(#${g})"/>
-    <path d="M14 40 h72 v22 a10 10 0 0 0 0 20 v22 H14 V82 a10 10 0 0 0 0 -20 Z" fill="#e8f2fa"/>
-    <text x="50" y="80" font-size="17" font-weight="900" text-anchor="middle" fill="#2f6a9a" font-family="sans-serif">VOUCHER</text>
-    <path d="M50 44 v10 m0 8 v10 m0 8 v10 m0 8 v10" stroke="#9ab8cc" stroke-width="3" stroke-dasharray="4 5"/>`);
+    <path d="M16 34 h68 v26 a11 11 0 0 0 0 22 v26 H16 V82 a11 11 0 0 0 0 -22 Z" fill="#f6e3b4"/>
+    <path d="M50 38 v12 m0 9 v12 m0 9 v12 m0 9 v12" stroke="#c9a860" stroke-width="3" stroke-dasharray="5 6"/>
+    <circle cx="33" cy="62" r="9" fill="none" stroke="#b8862c" stroke-width="3"/>
+    <path d="M28 62 h10 M33 57 v10" stroke="#b8862c" stroke-width="3"/>
+    <path d="M62 54 h14 M62 64 h14 M62 74 h9" stroke="#c9a860" stroke-width="4" stroke-linecap="round"/>
+    <path d="M24 96 h52" stroke="#b8862c" stroke-width="3" stroke-dasharray="6 5"/>`);
 }
 
 export function tagArt(emoji) {
