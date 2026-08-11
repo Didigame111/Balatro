@@ -6,6 +6,7 @@ import { JOKERS, RARITY, jokerDesc } from './jokers.js';
 import { CONSUMABLES, consumableDesc } from './consumables.js';
 import { DECKS, VOUCHERS, PACK_BY_KEY, handValues, BASE_CONFIG } from './data.js';
 import { RNG } from './rng.js';
+import { audio } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -29,17 +30,22 @@ export class UI {
     engine.on('state', () => { if (!this.animating) this.render(); });
     engine.on('toast', ({ text, kind }) => this.toast(text, kind));
     // End-of-round overlays wait until the scoring animation has finished.
-    engine.on('round_won', (s) => this.later(() => this.showCashOut(s)));
-    engine.on('game_over', (info) => this.later(() => this.showGameOver(info)));
-    engine.on('won', () => this.later(() => this.showVictory()));
-    engine.on('pack_opened', () => this.showPack());
+    engine.on('round_won', (s) => this.later(() => { audio.sfx('win'); this.showCashOut(s); }));
+    engine.on('game_over', (info) => this.later(() => { audio.sfx('lose'); this.showGameOver(info); }));
+    engine.on('won', () => this.later(() => { audio.sfx('win'); this.showVictory(); }));
+    engine.on('pack_opened', () => { audio.sfx('pack'); this.showPack(); });
     engine.on('pack_closed', () => this.closeOverlay());
-    engine.on('tag_gained', ({ tag }) => this.toast(`${tag.emoji} ${tag.name}`, 'good'));
+    engine.on('tag_gained', ({ tag }) => { audio.sfx('tag'); this.toast(`${tag.emoji} ${tag.name}`, 'good'); });
+    engine.on('card_destroyed', () => audio.sfx('destroy'));
+    engine.on('blind_started', () => audio.setMood(engine.blind.type === 'boss' && !engine.blind.disabled ? 'boss' : 'play'));
+    engine.on('shop_opened', () => audio.setMood('shop'));
+    engine.on('cards_discarded', () => audio.sfx('discard'));
     engine.on('created', ({ kind, key, source }) => {
       const name = kind === 'joker' ? (JOKERS[key] || {}).name : (CONSUMABLES[key] || {}).name;
       if (name) this.toast(`${source}: ${name}`, 'good');
     });
     engine.on('hand_leveled', ({ key, level, amount, source }) => {
+      if (amount > 0) audio.sfx('levelup');
       if (amount > 0) this.toast(`${source}: ${HAND_NAMES[key]} → lvl ${level}`, 'good');
       else this.toast(`${source}: ${HAND_NAMES[key]} → lvl ${level}`, 'warn');
     });
@@ -109,6 +115,15 @@ export class UI {
     this.renderJokers();
     this.renderConsumables();
     this.renderStage();
+    this.syncMood();
+  }
+
+  // Keep the backing track matching whatever screen the player is on.
+  syncMood() {
+    const e = this.e;
+    if (e.gameState === 'shop' || e.gameState === 'pack') audio.setMood('shop');
+    else if (e.gameState === 'playing') audio.setMood(e.blind.type === 'boss' && !e.blind.disabled ? 'boss' : 'play');
+    else if (e.gameState === 'blind_select' || e.gameState === 'round_won') audio.setMood('play');
   }
 
   renderPlaying() {
@@ -219,10 +234,11 @@ export class UI {
 
   toggleCard(card) {
     if (this.animating) return;
-    if (this.selected.has(card.uid)) this.selected.delete(card.uid);
+    if (this.selected.has(card.uid)) { this.selected.delete(card.uid); audio.sfx('deselect'); }
     else {
       if (this.selected.size >= 5) { this.toast('Maximum 5 cards', 'warn'); return; }
       this.selected.add(card.uid);
+      audio.sfx('select');
     }
     // Toggle in place rather than re-rendering, so the raise animation plays.
     const node = $('hand-row').querySelector(`[data-uid="${card.uid}"]`);
@@ -557,7 +573,10 @@ export class UI {
         label: item.kind === 'pack' ? `Open $${item.cost}` : `Buy $${item.cost}`,
         cls: affordable ? 'btn-green' : 'btn-ghost',
         disabled: !affordable,
-        onClick: () => { if (item.kind === 'pack') e.buyPack(item); else e.buyShopItem(item); },
+        onClick: () => {
+          if (item.kind === 'pack') e.buyPack(item);
+          else if (e.buyShopItem(item)) audio.sfx('buy');
+        },
       }],
     }));
   }
@@ -683,6 +702,49 @@ export class UI {
   }
 
   // ── info panels ─────────────────────────────────────────────────────
+  // Music, sound effects and volume. Shared by the title and run menus.
+  showAudioSettings(onBack) {
+    const node = h('div');
+    node.appendChild(h('h2', null, 'Sound'));
+    node.appendChild(h('p', null, 'The soundtrack and every effect are generated live in the browser — nothing is downloaded.'));
+
+    const toggleRow = (label, key) => {
+      const row = h('div', 'opt-row');
+      row.appendChild(h('span', null, label));
+      const btn = h('button', `btn btn-tiny ${audio.settings[key] ? 'active' : ''}`, audio.settings[key] ? 'ON' : 'OFF');
+      btn.addEventListener('click', () => {
+        audio.unlock();
+        audio.set(key, !audio.settings[key]);
+        btn.classList.toggle('active', audio.settings[key]);
+        btn.textContent = audio.settings[key] ? 'ON' : 'OFF';
+        if (key === 'sfx' && audio.settings.sfx) audio.sfx('select');
+      });
+      row.appendChild(btn);
+      node.appendChild(row);
+    };
+    toggleRow('Music', 'music');
+    toggleRow('Sound Effects', 'sfx');
+
+    const volRow = h('div', 'opt-row');
+    volRow.appendChild(h('span', null, 'Volume'));
+    const slider = h('input', 'slider');
+    slider.type = 'range';
+    slider.min = '0';
+    slider.max = '100';
+    slider.value = String(Math.round(audio.settings.volume * 100));
+    slider.addEventListener('input', () => audio.set('volume', Number(slider.value) / 100));
+    slider.addEventListener('change', () => audio.sfx('select'));
+    volRow.appendChild(slider);
+    node.appendChild(volRow);
+
+    node.appendChild(h('p', null, '<span class="muted">On iPhone the ring/silent switch mutes web audio — flip it to ring if you hear nothing.</span>'));
+
+    const back = h('button', 'btn btn-ghost', onBack ? 'Back' : 'Close');
+    back.addEventListener('click', () => { this.closeOverlay(); if (onBack) onBack(); });
+    node.appendChild(back);
+    this.openOverlay(node);
+  }
+
   showRunMenu() {
     const node = h('div');
     node.appendChild(h('h2', null, 'Menu'));
@@ -694,6 +756,7 @@ export class UI {
     add('Run Info', 'btn-blue', () => this.showRunInfo());
     add('Poker Hands', 'btn-blue', () => this.showHandLevels());
     add('View Deck', 'btn-blue', () => this.showDeckView());
+    add('Sound', 'btn-blue', () => this.showAudioSettings(() => this.showRunMenu()));
     add('Save & Quit to Menu', 'btn-gold', () => { this.closeOverlay(); this.app.saveAndQuit(); });
     add('Abandon Run', 'btn-red', () => { this.closeOverlay(); this.app.endRun(); });
     add('Close', 'btn-ghost', () => this.closeOverlay());
@@ -809,6 +872,8 @@ export class UI {
     if (!check.ok) { this.toast(check.reason, 'warn'); return; }
 
     this.animating = true;
+    audio.sfx('play');
+    audio.resetChips();
     const played = selected.slice();
     this.selected.clear();
 
@@ -864,6 +929,7 @@ export class UI {
       } else if (step.type === 'card_trigger') {
         const node = $('play-area').querySelector(`[data-played-uid="${step.card.uid}"]`);
         if (node) { node.classList.remove('scoring'); void node.offsetWidth; node.classList.add('scoring'); }
+        audio.sfx('chip');
         await wait(delay * 0.6);
       } else if (step.type === 'card_debuffed') {
         const node = $('play-area').querySelector(`[data-played-uid="${step.card.uid}"]`);
@@ -878,6 +944,7 @@ export class UI {
           ? $('play-area').querySelector(`[data-played-uid="${step.card.uid}"]`) || this.handNode(step.card)
           : this.jokerNodeByName(step.source);
         for (const part of step.parts) this.floatAt(anchor, partText(part), part.kind);
+        this.sfxForEffect(step);
         await wait(delay);
       } else if (step.type === 'balance') {
         chips = step.chips; mult = step.mult;
@@ -889,10 +956,20 @@ export class UI {
         chipsEl.textContent = fmt(step.chips);
         multEl.textContent = fmt(round2(step.mult));
         await wait(delay * 2);
+        audio.sfx('levelup');
         this.floatAt($('score-bar'), `+${fmt(step.score)}`, 'money');
       }
     }
     await wait(200);
+  }
+
+  // One cue per effect: the flashiest part wins so the mix stays readable.
+  sfxForEffect(step) {
+    const kinds = step.parts.map((p) => p.kind);
+    if (kinds.includes('xmult')) audio.sfx('xmult');
+    else if (kinds.includes('money')) audio.sfx('money');
+    else if (kinds.includes('mult')) audio.sfx('mult');
+    else if (kinds.includes('chips') && !step.card) audio.sfx('joker');
   }
 
   bump() {

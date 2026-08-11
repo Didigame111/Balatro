@@ -4,6 +4,7 @@ import { Engine } from './engine.js';
 import { UI } from './ui.js';
 import { DECKS, DECK_KEYS } from './data.js';
 import { randomSeed } from './rng.js';
+import { audio } from './audio.js';
 
 const SAVE_KEY = 'balatro.save.v2';
 const $ = (id) => document.getElementById(id);
@@ -43,6 +44,7 @@ class App {
     $('btn-start').addEventListener('click', () => this.startRun());
     $('btn-continue').addEventListener('click', () => this.continueRun());
     $('btn-how').addEventListener('click', () => this.showHowTo());
+    $('btn-audio').addEventListener('click', () => this.ui.showAudioSettings());
     $('btn-collection').addEventListener('click', () => this.showCollection());
   }
 
@@ -91,12 +93,14 @@ class App {
   saveAndQuit() {
     this.save();
     this.refreshContinue();
+    audio.setMood('menu');
     this.ui.showMenuScreen();
   }
 
   endRun() {
     localStorage.removeItem(SAVE_KEY);
     this.refreshContinue();
+    audio.setMood('menu');
     this.ui.showMenuScreen();
   }
 
@@ -175,11 +179,35 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
 document.addEventListener('dblclick', (e) => e.preventDefault());
 const SCROLLERS = '#stage, .sheet, .sheet-scroll, .card-row, .deck-list, .deck-grid';
 window.addEventListener('touchmove', (e) => {
+  // Sliders and text fields need their own drags.
+  if (e.target.closest && e.target.closest('input, textarea')) return;
   // Block rubber-banding the page itself, but let real scroll containers work.
   const node = e.target.closest ? e.target.closest(SCROLLERS) : null;
   if (node && (node.scrollHeight > node.clientHeight || node.scrollWidth > node.clientWidth)) return;
   e.preventDefault();
 }, { passive: false });
+
+// Browsers refuse to make noise until the user has interacted with the page,
+// so the audio graph is built inside the very first gesture.
+function unlockAudio() {
+  audio.unlock();
+  window.removeEventListener('pointerdown', unlockAudio);
+  window.removeEventListener('touchend', unlockAudio);
+  window.removeEventListener('keydown', unlockAudio);
+}
+window.addEventListener('pointerdown', unlockAudio);
+window.addEventListener('touchend', unlockAudio);
+window.addEventListener('keydown', unlockAudio);
+
+// A soft click on anything button-like. Cards and the play/discard buttons
+// have their own, more specific cues.
+document.addEventListener('click', (e) => {
+  const target = e.target.closest && e.target.closest('.btn, .hud-btn, .shop-item, .deck-item, .jtile, .ctile');
+  if (!target || target.id === 'btn-play' || target.id === 'btn-discard') return;
+  audio.sfx('button');
+});
+
+document.addEventListener('visibilitychange', () => audio.handleVisibility(document.hidden));
 
 window.app = new App();
 
