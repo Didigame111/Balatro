@@ -73,9 +73,14 @@ game will keep working with the phone in airplane mode once it has loaded once.
 
 ### Notes
 
-- `vercel.json` marks `sw.js`, `index.html`, the JS and the CSS as
+- `vercel.json` marks `sw.js`, the app shell, the JS and the CSS as
   `must-revalidate` so a new deploy is picked up rather than being served from
   a stale edge cache. Icons are cached for a week.
+- `cleanUrls` is on, so the app is served at `/` and `/index.html` redirects
+  there. The manifest's `start_url` is `./` for that reason — pointing it at
+  `index.html` makes the installed app launch into a redirect, which iOS does
+  not handle gracefully. If you change hosts, keep `start_url`, `scope` and
+  `id` consistent with wherever the shell actually lives.
 - The service worker itself is cache-first. After deploying an update, the new
   version is fetched in the background and applied on the *next* launch. To see
   a change immediately, bump `CACHE_VERSION` in `sw.js`.

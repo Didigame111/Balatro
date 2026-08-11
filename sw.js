@@ -1,9 +1,11 @@
 // Offline shell. Bump CACHE_VERSION whenever the asset list changes.
-const CACHE_VERSION = 'balatro-v5';
+const CACHE_VERSION = 'balatro-v6';
 
+// "./" is the app shell. "./index.html" is deliberately not listed too: the
+// host serves clean URLs and redirects that path, and redirected responses are
+// not cacheable per spec, so caching it is at best a duplicate.
 const ASSETS = [
   './',
-  './index.html',
   './manifest.webmanifest',
   './css/style.css',
   './js/main.js',
@@ -40,24 +42,40 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+function cacheable(response) {
+  // Redirected responses cannot be written to the cache.
+  return response && response.status === 200 && response.type === 'basic' && !response.redirected;
+}
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'GET') return;
 
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      // Serve from cache first so the game works with no connection at all,
-      // then quietly refresh the entry in the background.
-      const network = fetch(request)
-        .then((response) => {
-          if (response && response.status === 200 && response.type === 'basic') {
-            const copy = response.clone();
-            caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy));
-          }
-          return response;
-        })
-        .catch(() => cached);
-      return cached || network;
-    })
-  );
+  event.respondWith((async () => {
+    const cached = await caches.match(request);
+
+    const network = fetch(request)
+      .then((response) => {
+        if (cacheable(response)) {
+          const copy = response.clone();
+          caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy));
+        }
+        return response;
+      })
+      .catch(() => null);
+
+    // Cache first so the game works with no connection, refreshing behind it.
+    if (cached) return cached;
+
+    const response = await network;
+    if (response) return response;
+
+    // Offline and unseen: any navigation still resolves to the app shell, so
+    // launching at /index.html or a deep link works the same as at the root.
+    if (request.mode === 'navigate') {
+      const shell = await caches.match('./');
+      if (shell) return shell;
+    }
+    return Response.error();
+  })());
 });
