@@ -114,10 +114,14 @@ class App {
     if (!raw) return;
     try {
       const restored = Engine.deserialize(JSON.parse(raw));
-      // Carry the live listeners over to the restored engine.
-      restored.listeners = this.engine.listeners;
-      this.engine = restored;
-      this.ui.e = restored;
+      // Copy the restored run into the engine that is already wired up, rather
+      // than swapping the object out and moving the listeners across. Keeping
+      // the engine's identity means everything holding a reference to it —
+      // listeners, the UI, the tutorial — keeps pointing at the live run.
+      // deserialize() builds on a fresh Engine, so this also clears anything
+      // left over from a previous run.
+      const { listeners, ...state } = restored;
+      Object.assign(this.engine, state);
       this.ui.selected.clear();
       this.ui.showRunScreen();
       if (restored.gameState === 'round_won' && restored.roundSummary) this.ui.showCashOut(restored.roundSummary);

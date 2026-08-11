@@ -127,7 +127,10 @@ export class UI {
     engine.on('pack_opened', () => { audio.sfx('pack'); haptics.bump(); });
     engine.on('tag_gained', ({ tag }) => { audio.sfx('tag'); haptics.bump(); this.toast(`${tag.emoji} ${tag.name}`, 'good'); });
     engine.on('card_destroyed', () => audio.sfx('destroy'));
-    engine.on('blind_started', () => audio.setMood(engine.blind.type === 'boss' && !engine.blind.disabled ? 'boss' : 'play'));
+    // Take the blind from the event, not from the engine this closure was
+    // built with: continuing a save swaps in a different engine object and
+    // moves these listeners onto it, leaving the captured one behind.
+    engine.on('blind_started', (blind) => audio.setMood(blind.type === 'boss' && !blind.disabled ? 'boss' : 'play'));
     engine.on('shop_opened', () => audio.setMood('shop'));
     engine.on('cards_discarded', () => audio.sfx('discard'));
     engine.on('created', ({ kind, key, source }) => {

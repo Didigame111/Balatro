@@ -27,8 +27,18 @@ export class Engine {
     return this;
   }
 
+  // Listeners are presentation code. One of them throwing must not abandon a
+  // state transition half-finished — that is how a broken sound cue turned
+  // into "selecting a blind does nothing", with the emit('state') that
+  // repaints the screen never reached.
   emit(event, payload) {
-    for (const cb of this.listeners[event] || []) cb(payload);
+    for (const cb of this.listeners[event] || []) {
+      try {
+        cb(payload);
+      } catch (err) {
+        console.error(`listener for "${event}" threw`, err);
+      }
+    }
     if (event !== '*') this.emit('*', { event, payload });
   }
 
@@ -1539,6 +1549,14 @@ export class Engine {
     e.tags = [];
     e.disabledJoker = null;
     e.pack = null;
+    // Within-round scratch state. It is not worth saving, but it does have to
+    // be defined: a restore copies this object over the running engine, so
+    // anything left unset here would keep whatever the last run put there.
+    e.roundMoneyEarned = 0;
+    e.bossTriggeredThisHand = false;
+    e.forcedCard = null;
+    e.shopRolled = null;
+    e.packTelescopeUsed = false;
     // Booster packs are not part of the save, so drop back to the screen the
     // pack was opened from instead of restoring into an empty pack.
     if (e.gameState === 'pack') e.gameState = e.shop ? 'shop' : 'blind_select';

@@ -7,6 +7,7 @@ import { handValues, DECK_KEYS, BOSSES } from '../js/data.js';
 import { JOKERS, JOKER_KEYS } from '../js/jokers.js';
 import { CONSUMABLES } from '../js/consumables.js';
 import { simulate } from './bot.js';
+import { readFileSync } from 'node:fs';
 
 function freshRun(opts = {}) {
   const e = new Engine();
@@ -409,4 +410,75 @@ test('the autoplayer survives every deck', () => {
     const result = simulate(e, { maxSteps: 2000 });
     assert.notEqual(result.outcome, 'timeout', `deck ${deck} never finished`);
   }
+});
+
+// A listener is presentation code. If one throws, the state transition it was
+// observing still has to finish — otherwise the screen silently stops
+// following the engine, which is how "selecting a blind does nothing" got out.
+test('a throwing listener cannot abandon a state transition', () => {
+  const e = freshRun({ seed: 'LISTENER' });
+  const seen = [];
+  e.on('blind_started', () => { throw new Error('boom'); });
+  e.on('blind_started', () => seen.push('after-throw'));
+  e.on('state', () => seen.push('state'));
+
+  assert.doesNotThrow(() => e.selectBlind());
+  assert.ok(seen.includes('after-throw'), 'later listeners for the same event still ran');
+  assert.ok(seen.includes('state'), 'the emit that repaints the screen was still reached');
+  assert.equal(e.gameState, 'playing');
+});
+
+// Continuing a save builds a new engine and moves the old one's listeners
+// across, so a listener that closed over the engine it was registered on would
+// be reading a dead object.
+test('listeners moved onto a restored engine see the restored run', () => {
+  const e = freshRun({ seed: 'RESTORE' });
+  e.money = 17;
+  const restored = Engine.deserialize(JSON.parse(JSON.stringify(e.serialize())));
+
+  const events = [];
+  restored.listeners = { blind_started: [(blind) => events.push(blind)], state: [() => events.push('state')] };
+  assert.doesNotThrow(() => restored.selectBlind());
+
+  assert.equal(events.length, 2);
+  assert.equal(events[0].type, restored.blind.type, 'the event carries the blind that actually started');
+  assert.equal(restored.gameState, 'playing');
+  assert.equal(restored.hand.length, restored.handSize);
+});
+
+// Skipping is not selecting: it takes the tag and moves on, and must never
+// drop the player into the blind they just declined.
+test('skipping a blind never starts it', () => {
+  const e = freshRun({ seed: 'SKIPPY' });
+  const before = e.round;
+  let skipped = null;
+  e.on('blind_skipped', (info) => { skipped = info; });
+
+  e.skipBlind();
+
+  assert.equal(e.gameState, 'blind_select', 'still choosing a blind');
+  assert.equal(e.blind, null, 'no blind was started');
+  assert.equal(e.hand.length, 0, 'no cards were dealt');
+  assert.equal(e.round, before + 1, 'the round moved on');
+  assert.equal(e.stats.skips, 1, 'the skip was counted');
+  // Some tags apply on the spot rather than being held, so check the award
+  // reached the player at all rather than that it landed in a particular list.
+  assert.ok(skipped && skipped.tag, 'a tag came with the skip');
+});
+
+// Continuing a save copies the deserialized run over the engine that is
+// already running, so deserialize() has to define every field the engine ever
+// assigns. A field it leaves out would silently keep the previous run's value.
+test('deserialize defines every field the engine sets at runtime', () => {
+  const src = readFileSync(new URL('../js/engine.js', import.meta.url), 'utf8');
+  const body = (re) => (src.match(re) || [, ''])[1];
+  const ctor = body(/constructor\(\)\s*\{([\s\S]*?)\n {2}\}/);
+  const deser = body(/static deserialize\(data\)\s*\{([\s\S]*?)\n {4}return e;/);
+
+  const assigned = (text, self) => new Set([...text.matchAll(new RegExp(`${self}\\.(\\w+)\\s*=(?!=)`, 'g'))].map((m) => m[1]));
+  const everywhere = assigned(src, 'this');
+  const defined = new Set([...assigned(ctor, 'this'), ...assigned(deser, 'e')]);
+
+  const missing = [...everywhere].filter((f) => !defined.has(f)).sort();
+  assert.deepEqual(missing, [], `fields a restore would inherit from the previous run: ${missing.join(', ')}`);
 });

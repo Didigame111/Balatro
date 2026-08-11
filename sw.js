@@ -1,5 +1,5 @@
 // Offline shell. Bump CACHE_VERSION whenever the asset list changes.
-const CACHE_VERSION = 'balatro-v10';
+const CACHE_VERSION = 'balatro-v11';
 
 // "./" is the app shell. "./index.html" is deliberately not listed too: the
 // host serves clean URLs and redirects that path, and redirected responses are
