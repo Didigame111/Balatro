@@ -1,5 +1,5 @@
 // Offline shell. Bump CACHE_VERSION whenever the asset list changes.
-const CACHE_VERSION = 'jokers-wild-v1';
+const CACHE_VERSION = 'balatro-v1';
 
 const ASSETS = [
   './',

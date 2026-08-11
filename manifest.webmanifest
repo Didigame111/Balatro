@@ -1,10 +1,10 @@
 {
-  "name": "Jokers Wild",
-  "short_name": "Jokers Wild",
+  "name": "Balatro",
+  "short_name": "Balatro",
   "description": "A poker roguelike deck-builder that runs offline from your Home Screen.",
   "start_url": "./index.html",
   "scope": "./",
-  "id": "/jokers-wild/",
+  "id": "/balatro/",
   "display": "standalone",
   "display_override": ["standalone", "fullscreen"],
   "orientation": "portrait",

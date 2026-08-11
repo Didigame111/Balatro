@@ -1,5 +1,5 @@
 /* ===========================================================================
-   Jokers Wild — a poker roguelike, tuned for a 390×844 iPhone viewport.
+   Balatro — a poker roguelike, tuned for a 390×844 iPhone viewport.
    =========================================================================== */
 
 :root {
@@ -116,15 +116,14 @@ body {
 }
 
 .logo {
-  font-size: 40px;
+  font-size: 46px;
   font-weight: 900;
-  letter-spacing: -1px;
-  line-height: .95;
-  margin-bottom: 4px;
-  text-shadow: 0 4px 0 rgba(0, 0, 0, .4);
+  letter-spacing: 3px;
+  line-height: 1;
+  margin-bottom: 8px;
+  color: var(--mult);
+  text-shadow: 0 4px 0 rgba(0, 0, 0, .45), 0 0 26px rgba(254, 95, 85, .3);
 }
-.logo-j { color: var(--mult); display: block; }
-.logo-w { color: var(--chips); display: block; }
 .tagline { color: var(--ink-dim); font-weight: 700; margin-bottom: 26px; letter-spacing: 2px; text-transform: uppercase; font-size: 11px; }
 
 .menu-buttons { display: flex; flex-direction: column; gap: 10px; padding: 0 16px; }

@@ -5,7 +5,7 @@ import { UI } from './ui.js';
 import { DECKS, DECK_KEYS } from './data.js';
 import { randomSeed } from './rng.js';
 
-const SAVE_KEY = 'jokerswild.save.v2';
+const SAVE_KEY = 'balatro.save.v2';
 const $ = (id) => document.getElementById(id);
 
 class App {
