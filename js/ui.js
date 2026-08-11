@@ -38,6 +38,52 @@ const PIP_LAYOUT = {
 // How long the scoring animation takes, as a multiplier.
 const SPEED_KEY = 'balatro.speed.v1';
 const SPEEDS = { slow: 1.7, normal: 1, fast: 0.55 };
+const COLOUR_KEY = 'balatro.deckcolour.v1';
+
+const HAND_WORDS = new Set(Object.values(HAND_NAMES).map((n) => n.toLowerCase()));
+const NOUN_WORDS = new Set(['blind', 'joker', 'jokers', 'tarot', 'planet', 'spectral',
+  'booster pack', 'card', 'cards', 'hand', 'hands', 'discard', 'discards', 'ante', 'round',
+  'boss blind', 'small blind', 'big blind', 'consumable', 'voucher', 'seal', 'edition']);
+
+const NOUN_RE = new RegExp(
+  `\\b(${[...HAND_WORDS, ...NOUN_WORDS].sort((a, b) => b.length - a.length)
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\b`, 'gi');
+
+// Colour the game's nouns wherever they appear in running text, not just
+// inside the <b> runs. Done over text nodes so no markup can be mangled.
+function highlightNouns(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const targets = [];
+  let node;
+  while ((node = walker.nextNode())) {
+    if (node.parentElement.closest('.kw')) continue;
+    if (NOUN_RE.test(node.nodeValue)) targets.push(node);
+    NOUN_RE.lastIndex = 0;
+  }
+  for (const text of targets) {
+    const span = document.createElement('span');
+    span.innerHTML = text.nodeValue.replace(NOUN_RE, '<span class="kw-noun">$1</span>');
+    text.parentNode.replaceChild(span, text);
+  }
+}
+
+// Wrap the <b> runs a description already carries in a coloured chip chosen by
+// what the text is about: chips blue, mult red, money gold, nouns orange.
+function styleDesc(html) {
+  return String(html || '').replace(/<b>(.*?)<\/b>/g, (_, inner) => {
+    const text = inner.replace(/<[^>]+>/g, '').trim();
+    const lower = text.toLowerCase();
+    let cls = 'kw-plain';
+    if (/mult/i.test(text)) cls = 'kw-mult';
+    else if (/chips?/i.test(text)) cls = 'kw-chips';
+    else if (/^-?\$/.test(text)) cls = 'kw-money';
+    else if (/^[X×]\d/i.test(text)) cls = 'kw-mult';
+    else if (/^\+?\d+$/.test(text)) cls = 'kw-plain';
+    else if (HAND_WORDS.has(lower) || NOUN_WORDS.has(lower)) cls = 'kw-noun';
+    else if (/\b(in)\b/.test(lower) && /\d/.test(text)) cls = 'kw-noun';
+    return `<span class="kw ${cls}">${inner}</span>`;
+  });
+}
 
 // Art for anything that can sit in a card slot.
 function artFor(item) {
@@ -58,10 +104,14 @@ export class UI {
     this.runInfoTab = 'hands';
     this.lastRenderedUids = new Set();
     this.speed = 'normal';
+    this.deckColour = 'four';
     try {
       const saved = localStorage.getItem(SPEED_KEY);
       if (saved && SPEEDS[saved]) this.speed = saved;
-    } catch (err) { /* default is fine */ }
+      const colour = localStorage.getItem(COLOUR_KEY);
+      if (colour === 'two' || colour === 'four') this.deckColour = colour;
+    } catch (err) { /* defaults are fine */ }
+    document.body.classList.toggle('two-colour', this.deckColour === 'two');
 
     this.bindStaticControls();
     engine.on('state', () => { if (!this.animating) this.render(); });
@@ -278,27 +328,25 @@ export class UI {
   }
 
   cardEl(card) {
-    const suit = SUITS[card.suit];
-    const red = card.suit === 'H' || card.suit === 'D';
-    const node = h('div', 'pcard');
+    const node = h('div', `pcard suit-${card.suit}`);
     node.dataset.uid = card.uid;
-    if (red) node.classList.add('red');
     if (card.enhancement) node.classList.add(`enh-${card.enhancement}`);
     if (card.edition) node.classList.add(`ed-${card.edition}`);
     if (card.debuffed && !card.faceDown) node.classList.add('debuffed');
     if (card.faceDown) node.classList.add('facedown');
 
     const corner = (cls) =>
-      `<span class="pc-corner ${cls}"><span class="pc-rank">${rankLabel(card.rank)}</span><span class="pc-suit">${suit.symbol}</span></span>`;
+      `<span class="pc-corner ${cls}"><span class="pc-rank">${rankLabel(card.rank)}</span>` +
+      `<span class="pc-suit pip-shape"></span></span>`;
 
     let middle;
     if (card.rank === 14) {
-      middle = `<span class="pc-center">${suit.symbol}</span>`;
+      middle = '<span class="pc-center pip-shape"></span>';
     } else if (card.rank >= 11) {
       middle = `<span class="pc-face">${rankLabel(card.rank)}</span>`;
     } else {
       const pips = (PIP_LAYOUT[card.rank] || [])
-        .map(([x, y]) => `<span class="pc-pip${y > 50 ? ' flip' : ''}" style="left:${x}%;top:${y}%">${suit.symbol}</span>`)
+        .map(([x, y]) => `<span class="pc-pip pip-shape${y > 50 ? ' flip' : ''}" style="left:${x}%;top:${y}%"></span>`)
         .join('');
       middle = `<span class="pc-pips">${pips}</span>`;
     }
@@ -517,6 +565,7 @@ export class UI {
     else slot.appendChild(this.cardEl(item.card));
     node.appendChild(slot);
     node.appendChild(h('div', `price-tag ${item.cost === 0 ? 'free' : ''}`, item.cost === 0 ? 'FREE' : `$${item.cost}`));
+    node.appendChild(h('div', 'shop-name', view.name));
     if (view.rarityColor) {
       const dot = h('span', 'si-rarity');
       dot.style.background = view.rarityColor;
@@ -559,14 +608,16 @@ export class UI {
     $('overlay').innerHTML = '';
   }
 
-  infoSheet({ emoji, art, title, subtitle, subtitleColor, desc, actions = [], onClose }) {
+  infoSheet({ emoji, art, title, subtitle, subtitleColor, desc, badge, badgeClass, actions = [], onClose }) {
     const node = h('div');
     node.innerHTML =
       `<div class="info-head">
          <div class="${art ? 'info-art' : 'info-emoji'}">${art || emoji}</div>
          <div class="info-title"><b>${title}</b><span style="color:${subtitleColor || 'var(--ink-dim)'}">${subtitle || ''}</span></div>
        </div>
-       <div class="info-desc">${desc}</div>`;
+       <div class="info-desc">${styleDesc(desc)}</div>` +
+      (badge ? `<div class="rarity-badge ${badgeClass || ''}">${badge}</div>` : '');
+    highlightNouns(node.querySelector('.info-desc'));
     const bar = h('div', 'info-actions');
     for (const a of actions) {
       const btn = h('button', `btn ${a.cls || 'btn-ghost'}`, a.label);
@@ -605,9 +656,11 @@ export class UI {
     this.openOverlay(this.infoSheet({
       art: jokerArt(joker.key),
       title: def.name || joker.key,
-      subtitle: `${RARITY[def.rarity] ? RARITY[def.rarity].name : ''}${joker.edition ? ` · ${EDITIONS[joker.edition].name}` : ''}`,
+      subtitle: joker.edition ? EDITIONS[joker.edition].name : '',
       subtitleColor: RARITY[def.rarity] ? RARITY[def.rarity].color : null,
       desc: jokerDesc(joker, e) + (joker.edition ? `<br><span class="muted">${EDITIONS[joker.edition].desc}</span>` : ''),
+      badge: RARITY[def.rarity] ? RARITY[def.rarity].name : null,
+      badgeClass: `rarity-${def.rarity}`,
       actions,
     }), { narrow: true });
   }
@@ -624,7 +677,9 @@ export class UI {
     this.openOverlay(this.infoSheet({
       art: consumableArt(card, TAROT_KEYS.indexOf(card.key)),
       title: def.name || card.key,
-      subtitle: (def.kind || '').toUpperCase(),
+      subtitle: '',
+      badge: (def.kind || '').toUpperCase(),
+      badgeClass: `kind-${def.kind}`,
       desc: consumableDesc(card, e) + hint + (check.ok ? '' : `<br><span style="color:var(--gold)">${check.reason}</span>`),
       actions: [
         {
@@ -649,9 +704,13 @@ export class UI {
     const view = this.describeItem(item);
     let desc = '';
     let subtitle = '';
+    let badge = null;
+    let badgeClass = '';
     if (item.kind === 'joker') {
       desc = jokerDesc({ key: item.key, state: makeProbeState(item.key) }, e);
-      subtitle = RARITY[view.def.rarity].name + (item.edition ? ` · ${EDITIONS[item.edition].name}` : '');
+      subtitle = item.edition ? EDITIONS[item.edition].name : '';
+      badge = RARITY[view.def.rarity].name;
+      badgeClass = `rarity-${view.def.rarity}`;
       if (item.edition) desc += `<br><span class="muted">${EDITIONS[item.edition].desc}</span>`;
     } else if (item.kind === 'voucher') {
       desc = VOUCHERS[item.key].desc;
@@ -668,7 +727,8 @@ export class UI {
       subtitle = 'Playing card';
     } else {
       desc = consumableDesc({ key: item.key }, e);
-      subtitle = item.kind.toUpperCase();
+      badge = item.kind.toUpperCase();
+      badgeClass = `kind-${item.kind}`;
     }
     const affordable = e.canAfford(item.cost);
     this.openOverlay(this.infoSheet({
@@ -678,6 +738,8 @@ export class UI {
       subtitle,
       subtitleColor: view.rarityColor,
       desc,
+      badge,
+      badgeClass,
       actions: [{
         label: item.kind === 'pack' ? `Open $${item.cost}` : `Buy $${item.cost}`,
         cls: affordable ? 'btn-green' : 'btn-ghost',
@@ -727,10 +789,14 @@ export class UI {
     let title = '';
     let desc = '';
     let subtitle = '';
+    let badge = null;
+    let badgeClass = '';
     if (option.kind === 'joker') {
       const d = JOKERS[option.key];
       emoji = d.emoji; title = d.name;
-      subtitle = RARITY[d.rarity].name + (option.edition ? ` · ${EDITIONS[option.edition].name}` : '');
+      subtitle = option.edition ? EDITIONS[option.edition].name : '';
+      badge = RARITY[d.rarity].name;
+      badgeClass = `rarity-${d.rarity}`;
       desc = jokerDesc({ key: option.key, state: makeProbeState(option.key) }, e);
     } else if (option.kind === 'playing') {
       emoji = SUITS[option.card.suit].symbol; title = cardName(option.card);
@@ -740,11 +806,13 @@ export class UI {
       if (option.card.seal) desc += `<br><b>${SEALS[option.card.seal].name}</b> — ${SEALS[option.card.seal].desc}`;
     } else {
       const d = CONSUMABLES[option.key];
-      emoji = d.emoji; title = d.name; subtitle = d.kind.toUpperCase();
+      emoji = d.emoji; title = d.name;
+      badge = d.kind.toUpperCase();
+      badgeClass = `kind-${d.kind}`;
       desc = consumableDesc({ key: option.key }, e);
     }
     this.openOverlay(this.infoSheet({
-      emoji, art, title, subtitle, desc,
+      emoji, art, title, subtitle, desc, badge, badgeClass,
       actions: [{
         label: 'Take', cls: 'btn-green',
         onClick: () => { e.takePackOption(option); },
@@ -879,6 +947,24 @@ export class UI {
     slider.addEventListener('change', () => audio.sfx('select'));
     volRow.appendChild(slider);
     node.appendChild(volRow);
+
+    const colourRow = h('div', 'opt-row');
+    colourRow.appendChild(h('span', null, 'Deck colours'));
+    const colourBtns = h('div', 'seg');
+    for (const [key, label] of [['four', '4 colour'], ['two', '2 colour']]) {
+      const btn = h('button', `btn btn-tiny ${this.deckColour === key ? 'btn-gold' : 'btn-ghost'}`, label);
+      btn.addEventListener('click', () => {
+        this.setDeckColour(key);
+        [...colourBtns.children].forEach((b, i) => {
+          b.className = `btn btn-tiny ${['four', 'two'][i] === key ? 'btn-gold' : 'btn-ghost'}`;
+        });
+        audio.sfx('select');
+        haptics.tap();
+      });
+      colourBtns.appendChild(btn);
+    }
+    colourRow.appendChild(colourBtns);
+    node.appendChild(colourRow);
 
     const speedRow = h('div', 'opt-row');
     speedRow.appendChild(h('span', null, 'Scoring speed'));
@@ -1094,6 +1180,12 @@ export class UI {
   }
 
   get speedMult() { return SPEEDS[this.speed] || 1; }
+
+  setDeckColour(mode) {
+    this.deckColour = mode;
+    try { localStorage.setItem(COLOUR_KEY, mode); } catch (err) { /* ignore */ }
+    document.body.classList.toggle('two-colour', mode === 'two');
+  }
 
   // Sweep the played cards off the felt before the new hand is dealt in.
   async clearPlayArea() {

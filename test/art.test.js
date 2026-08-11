@@ -46,10 +46,19 @@ test('packs, vouchers and tags all draw', () => {
   assertSvg(tagArt('💰'), 'tag');
 });
 
-test('gradient ids are unique across a whole board of art', () => {
-  const svg = JOKER_KEYS.map((k) => jokerArt(k)).join('') + packArt('joker') + voucherArt();
+test('element ids are unique across every kind of card on screen at once', () => {
+  // Gradients and clip paths are referenced by id, so a duplicate anywhere
+  // makes one card bleed into another.
+  const svg = [
+    ...JOKER_KEYS.map((k) => jokerArt(k)),
+    ...TAROT_KEYS.map((k) => consumableArt({ kind: 'tarot', key: k }, TAROT_KEYS.indexOf(k))),
+    ...PLANET_KEYS.map((k) => consumableArt({ kind: 'planet', key: k })),
+    ...SPECTRAL_KEYS.map((k) => consumableArt({ kind: 'spectral', key: k })),
+    ...PACKS.map((p) => packArt(p.kind)),
+    voucherArt(), tagArt('💰'),
+  ].join('');
   const ids = [...svg.matchAll(/id="([^"]+)"/g)].map((m) => m[1]);
-  assert.equal(new Set(ids).size, ids.length, 'duplicate gradient id would cross-contaminate cards');
+  assert.equal(new Set(ids).size, ids.length, 'duplicate id would cross-contaminate cards');
 });
 
 test('art is stable for a given key', () => {

@@ -641,19 +641,58 @@ function wrap(inner, extraClass = '') {
   return `<svg class="art ${extraClass}" viewBox="${VIEW}" preserveAspectRatio="xMidYMid slice" aria-hidden="true">${inner}</svg>`;
 }
 
+// A real joker card: cream face, JOKER running up both sides, art inset in the
+// middle. Same silhouette as a playing card, so a tray of them reads as a hand.
+function jokerCard(inner) {
+  const clip = gid();
+  const side = (x, angle) =>
+    `<text x="${x}" y="70" font-size="13" fill="#2b3440" font-family="inherit"
+       text-anchor="middle" transform="rotate(${angle} ${x} 70)">JOKER</text>`;
+  return `
+    <rect width="100" height="140" rx="8" fill="#fdfdf5"/>
+    <rect x="2" y="2" width="96" height="136" rx="7" fill="none" stroke="#d5d5c6" stroke-width="2"/>
+    ${side(11, -90)}${side(89, 90)}
+    <defs><clipPath id="${clip}"><rect x="21" y="14" width="58" height="112" rx="4"/></clipPath></defs>
+    <g clip-path="url(#${clip})">
+      <rect x="21" y="14" width="58" height="112" fill="#101820"/>
+      <g transform="translate(21,14) scale(0.58,0.8)">${inner}</g>
+    </g>
+    <rect x="21" y="14" width="58" height="112" rx="4" fill="none" stroke="#2b3440" stroke-width="2"/>`;
+}
+
 export function jokerArt(key) {
   const spec = JOKER_ART[key];
-  if (spec && spec.motif) {
-    const draw = MOTIFS[spec.motif];
-    if (draw) return wrap(draw(paletteFor(key, spec.palette), spec));
-  }
-  return wrap(jester(key, (spec && spec.jester) || {}));
+  const inner = spec && spec.motif && MOTIFS[spec.motif]
+    ? MOTIFS[spec.motif](paletteFor(key, spec.palette), spec)
+    : jester(key, (spec && spec.jester) || {});
+  return wrap(jokerCard(inner));
+}
+
+const KIND_BAND = {
+  tarot: { fill: '#7b4fb5', ink: '#f2e6ff', label: 'TAROT' },
+  planet: { fill: '#2f6ab5', ink: '#e2f0ff', label: 'PLANET' },
+  spectral: { fill: '#2f8f92', ink: '#e0fbfa', label: 'SPECTRAL' },
+};
+
+// Every consumable wears its type on a coloured band, so a Tarot is never
+// mistaken for a Planet in a crowded tray.
+function banded(kind, inner) {
+  const b = KIND_BAND[kind] || KIND_BAND.tarot;
+  const clip = gid();
+  return wrap(`
+    <rect width="100" height="140" rx="8" fill="${b.fill}"/>
+    <defs><clipPath id="${clip}"><rect x="5" y="5" width="90" height="115" rx="5"/></clipPath></defs>
+    <g clip-path="url(#${clip})">
+      <g transform="translate(5,5) scale(0.9,0.82)">${inner}</g>
+    </g>
+    <rect x="5" y="5" width="90" height="115" rx="5" fill="none" stroke="${b.ink}" stroke-width="2.5"/>
+    <text x="50" y="134" font-size="13" fill="${b.ink}" font-family="inherit" text-anchor="middle">${b.label}</text>`);
 }
 
 export function consumableArt(card, index = 0) {
-  if (card.kind === 'planet') return wrap(planetArt(card.key));
-  if (card.kind === 'spectral') return wrap(spectralArt(card.key));
-  return wrap(tarotArt(card.key, index));
+  if (card.kind === 'planet') return banded('planet', planetArt(card.key));
+  if (card.kind === 'spectral') return banded('spectral', spectralArt(card.key));
+  return banded('tarot', tarotArt(card.key, index));
 }
 
 // Boosters get a wrapper illustration keyed off what is inside them.
